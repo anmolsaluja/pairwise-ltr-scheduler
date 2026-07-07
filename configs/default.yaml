@@ -1,0 +1,36 @@
+# Pairwise LTR Scheduler — default settings
+
+model:
+  backbone: bert-base-uncased
+  margin: 1.0
+  min_length_diff: 0.2   # filter noisy pairs (PARS paper)
+
+training:
+  epochs: 5
+  batch_size: 32
+  learning_rate: 2.0e-5
+  max_prompt_length: 512
+
+scheduler:
+  policy: pairwise_ltr    # fcfs | ltr_pointwise | pairwise_ltr
+  batch_size: 8
+  starvation_seconds: 120  # boost stuck requests after 2 min
+
+priority:
+  # User-assigned priority boosts (lower score = served sooner)
+  high_boost: -2.0
+  normal_boost: 0.0
+  low_boost: 2.0
+
+simulation:
+  num_requests: 200
+  arrival_rate: 5.0       # requests per second
+  avg_output_tokens: 150
+  seed: 42
+
+cloud:
+  # Small model for Colab / free-tier GPU
+  llm_model: meta-llama/Llama-3.2-1B-Instruct
+  dataset: tatsu-lab/alpaca
+  train_samples: 2000
+  test_samples: 500

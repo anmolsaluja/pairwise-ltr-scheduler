@@ -1,0 +1,11 @@
+torch>=2.0.0
+transformers>=4.36.0
+datasets>=2.14.0
+numpy>=1.24.0
+pandas>=2.0.0
+pyyaml>=6.0
+tqdm>=4.65.0
+matplotlib>=3.7.0
+
+# Optional: uncomment on cloud GPU for real vLLM serving
+# vllm>=0.4.0
