@@ -1,53 +1,130 @@
-# ProD-M + PARS — Llama 3.3 8B + 2025–2026 benchmark datasets
+# Pairwise LTR Scheduling for LLM Serving
 
-## Recommended upgrades (now in `configs/default.yaml`)
+FDU Vancouver Capstone — CS Master's project.
 
-### LLM profiles (`llm.profile`)
+We look at latency in LLM serving. FCFS causes head-of-line blocking when a
+long request sits at the front of the queue. The papers we studied (LTR
+scheduling, PARS, ProD-M) suggest ranking requests by expected output length
+and serving shorter ones first.
 
-| Profile | Model | Best for |
-|---------|-------|----------|
-| **`llama33`** (default) | `meta-llama/Llama-3.3-8B-Instruct` | Direct upgrade from PPT's Llama 3.1; same 8B VRAM footprint |
-| `llama31` | `Meta-Llama-3.1-8B-Instruct` | Original midterm baseline |
-| `qwen25` | `Qwen/Qwen2.5-7B-Instruct` | ProD paper served model; strong length variance |
-| `deepseek_r1` | `DeepSeek-R1-Distill-Llama-8B` | **PARS paper focus** — reasoning traces, huge length spread |
+**What we built**
 
-Switch profile:
-```bash
-python scripts/generate_prod_labels.py --llm-profile deepseek_r1 --device cuda
+1. Sample Llama a few times per prompt → take the **median** length (ProD-M labels)
+2. Train a small MLP on Llama hidden states to predict length bins (**ProD-M**)
+3. Train a BERT pairwise ranker on those median pairs (**PARS-style**)
+4. Simulate **FCFS vs ProD-M vs Pairwise** and compare latency / throughput
+
+Priority levels (high / normal / low) and a simple starvation rule are included.
+
+---
+
+## Quick start (Google Colab)
+
+1. Runtime → Change runtime type → **GPU (T4)**
+2. Accept Llama license: https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct
+3. Create a HF token: https://huggingface.co/settings/tokens
+4. Open `notebooks/colab_run.ipynb` and run the cells top to bottom
+
+Or paste this in a Colab cell:
+
+```python
+import os
+os.environ["HF_TOKEN"] = "hf_YOUR_TOKEN"
+
+!git clone https://github.com/anmolsaluja/pairwise-ltr-scheduler.git
+%cd pairwise-ltr-scheduler
+!pip install -q -r requirements.txt
+
+!python scripts/check_setup.py
+!python scripts/run_all.py --limit 50 --device cuda
 ```
 
-### Datasets (`datasets.name=all`)
+`--limit 50` is a good first run (~30–90 min on T4). Use 100 for the report.
 
-| Dataset | Replaces | Why better |
-|---------|----------|------------|
-| **GSM8K** | — | Short math baseline (kept) |
-| **MATH** | — | Competition math; longer reasoning chains |
-| **LiveCodeBench** | MBPP | Rolling LeetCode/AtCoder; contamination-resistant (2025 standard) |
-| **WildChat-1M** | LMSYS | Real open chat logs; no gating |
-| **LongBench v2** | LongBench v1 | 503 tasks, 8k–2M context; 2025 long-context benchmark |
+---
 
-## Run
+## Project layout
+
+```
+src/
+  llama.py       # load Llama, sample lengths, pull hidden states
+  prod_m.py      # ProD-M MLP
+  ranker.py      # pairwise BERT ranker
+  scheduler.py   # FCFS / ProD-M / PARS
+  simulate.py    # discrete-event simulator
+  datasets.py    # gsm8k, math, livecodebench, wildchat, longbench
+  data.py        # labels + training pairs
+  metrics.py     # latency, MAE, Kendall tau
+  requests.py    # request object + priority
+  utils.py       # config / LLM profile helpers
+
+scripts/
+  check_setup.py
+  generate_labels.py
+  train_prod_m.py
+  train_ranker.py
+  evaluate.py
+  run_all.py          # runs everything
+```
+
+---
+
+## Step by step (local / cloud)
 
 ```bash
 export HF_TOKEN=hf_...
 pip install -r requirements.txt
 python scripts/check_setup.py
 
-# Default: Llama 3.3 + all updated datasets
-python scripts/run_pipeline.py --device cuda
+# full pipeline
+python scripts/run_all.py --limit 100 --device cuda
 
-# Reasoning experiment (PARS paper scenario)
-python scripts/run_pipeline.py --llm-profile deepseek_r1 --device cuda
+# or one step at a time
+python scripts/generate_labels.py --limit 100 --device cuda
+python scripts/train_prod_m.py --device cuda
+python scripts/train_ranker.py --device cuda
+python scripts/evaluate.py --device cuda
 ```
 
-## Why these choices fit *this* project
+If training already finished and you only want metrics again:
 
-ProD-M + PARS cares about **output-length variance**, not benchmark accuracy:
-- **LiveCodeBench** + **MATH** → short vs long solutions in same workload
-- **WildChat** → realistic mixed chat lengths
-- **LongBench v2** → long-context prompts stress the scheduler
-- **DeepSeek-R1** → reasoning CoT makes HOL blocking worse (exactly what PARS targets)
+```bash
+python scripts/run_all.py --skip-train --device cuda
+```
 
-## Team
+---
 
-FDU Vancouver Capstone — 2026.
+## What to look for in the results
+
+`evaluate.py` prints something like:
+
+```
+ProD-M MAE: ...
+PARS Kendall Tau: ...
+
+=== FCFS ===
+  p95: ...
+=== PROD_M ===
+  p95: ...
+=== PARS ===
+  p95: ...
+```
+
+We expect length-aware policies (ProD-M / PARS) to beat FCFS on p95 latency
+when the workload has mixed short and long outputs.
+
+---
+
+## Notes
+
+- Default model is `meta-llama/Llama-3.2-3B-Instruct` (fits Colab T4 in 4-bit).
+- Colab can wipe `/content` if the runtime disconnects — mount Drive and copy
+  `checkpoints/` + `data/processed/` when a step finishes.
+- Real vLLM integration is left as future work (same as in the proposal).
+
+## References
+
+- Fu et al., Efficient LLM Scheduling by Learning to Rank
+- Tao et al., PARS: Low-Latency LLM Serving via Pairwise Learning-to-Rank
+- Wang et al., ProD-M (median-supervised length prediction)
+- Kwon et al., vLLM / PagedAttention

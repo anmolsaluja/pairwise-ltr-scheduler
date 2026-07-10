@@ -1,9 +1,8 @@
 """
-Load prompts, ProD-M labels, and build PARS training pairs.
+Prompt records, label I/O, and pairwise training pairs.
 
-Pipeline data flow (from midterm slides):
-  prompts -> repeated sampling -> median labels (ProD-M)
-          -> filtered pairs -> PARS ranker training
+ProD-M idea: sample the LLM a few times per prompt, take the median
+length as a more stable label than a single noisy sample.
 """
 
 from __future__ import annotations
@@ -11,107 +10,24 @@ from __future__ import annotations
 import json
 import os
 import random
-import statistics
 from dataclasses import dataclass, field
-from typing import Iterator
-
-from datasets import load_dataset
-
-SAMPLE_DATA = os.path.join(os.path.dirname(__file__), "..", "data", "sample_prompts.json")
-PROD_LABELS_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "processed")
 
 
 @dataclass
 class PromptRecord:
-    """One prompt with a length label (median or proxy)."""
-
     prompt_id: str
     text: str
-    output_length: int
-    priority: str = "normal"
-    sample_lengths: list[int] = field(default_factory=list)
+    output_length: int = 0          # median length after labeling
+    priority: str = "normal"        # high / normal / low
+    sample_lengths: list = field(default_factory=list)
     single_sample_length: int = 0
 
 
-@dataclass
-class ProDLabelFile:
-    """Saved output of generate_prod_labels.py."""
-
-    records: list[PromptRecord]
-    meta: dict = field(default_factory=dict)
-
-
-def load_local_sample_prompts(limit: int | None = None) -> list[PromptRecord]:
-    with open(SAMPLE_DATA) as f:
-        rows = json.load(f)
-
-    records = []
-    for i, row in enumerate(rows):
-        instruction = row.get("instruction", "")
-        inp = row.get("input", "")
-        output = row.get("output", "")
-        text = f"{instruction}\n{inp}".strip() if inp else instruction
-        length = max(1, len(output.split()))
-        records.append(
-            PromptRecord(
-                prompt_id=f"sample_{i}",
-                text=text,
-                output_length=length,
-                single_sample_length=length,
-            )
-        )
-
-    if limit:
-        records = records[:limit]
-    return records
-
-
-def load_alpaca_prompts(
-    split: str = "train",
-    limit: int | None = None,
-    seed: int = 42,
-    use_local: bool = False,
-) -> list[PromptRecord]:
-    if use_local or os.environ.get("USE_LOCAL_DATA") == "1":
-        return load_local_sample_prompts(limit=limit)
-
-    try:
-        ds = load_dataset("tatsu-lab/alpaca", split=split)
-        rows = list(ds)
-    except Exception:
-        return load_local_sample_prompts(limit=limit)
-
-    random.Random(seed).shuffle(rows)
-    if limit:
-        rows = rows[:limit]
-
-    records = []
-    for i, row in enumerate(rows):
-        instruction = row.get("instruction", "")
-        inp = row.get("input", "")
-        output = row.get("output", "")
-        text = f"{instruction}\n{inp}".strip() if inp else instruction
-        length = max(1, len(output.split()))
-        records.append(
-            PromptRecord(
-                prompt_id=f"alpaca_{split}_{i}",
-                text=text.strip(),
-                output_length=length,
-                single_sample_length=length,
-            )
-        )
-    return records
-
-
-def save_prod_labels(
-    path: str,
-    records: list[PromptRecord],
-    meta: dict,
-    hidden_states_path: str | None = None,
-) -> None:
+def save_labels(path, records, meta, hidden_path=None):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    if hidden_states_path:
-        meta = {**meta, "hidden_states_path": hidden_states_path}
+    if hidden_path:
+        meta = {**meta, "hidden_states_path": hidden_path}
+
     payload = {
         "meta": meta,
         "records": [
@@ -121,9 +37,8 @@ def save_prod_labels(
                 "priority": r.priority,
                 "sample_lengths": r.sample_lengths,
                 "median_length": r.output_length,
-                "single_sample_length": r.single_sample_length or (
-                    r.sample_lengths[0] if r.sample_lengths else r.output_length
-                ),
+                "single_sample_length": r.single_sample_length
+                or (r.sample_lengths[0] if r.sample_lengths else r.output_length),
             }
             for r in records
         ],
@@ -132,7 +47,7 @@ def save_prod_labels(
         json.dump(payload, f, indent=2)
 
 
-def load_prod_labels(path: str) -> ProDLabelFile:
+def load_labels(path):
     with open(path) as f:
         payload = json.load(f)
 
@@ -145,106 +60,47 @@ def load_prod_labels(path: str) -> ProDLabelFile:
                 output_length=int(row["median_length"]),
                 priority=row.get("priority", "normal"),
                 sample_lengths=row.get("sample_lengths", []),
-                single_sample_length=int(row.get("single_sample_length", row["median_length"])),
+                single_sample_length=int(
+                    row.get("single_sample_length", row["median_length"])
+                ),
             )
         )
-    return ProDLabelFile(records=records, meta=payload.get("meta", {}))
+    return records, payload.get("meta", {})
 
 
-def simulate_repeated_lengths(
-    records: list[PromptRecord],
-    num_samples: int = 5,
-    noise_ratio: float = 0.3,
-    seed: int = 42,
-) -> list[PromptRecord]:
+def build_pairs(records, min_diff=0.2, max_pairs=5000):
     """
-    Offline fallback when no GPU is available.
+    Build (prompt_a, prompt_b, label) for margin ranking.
 
-    Adds noise around a base length, then takes the median — same idea as ProD-M
-  without running a real LLM.
-    """
-    rng = random.Random(seed)
-    out = []
-
-    for rec in records:
-        base = rec.single_sample_length or rec.output_length
-        samples = []
-        for _ in range(num_samples):
-            jitter = rng.uniform(-noise_ratio, noise_ratio) * base
-            samples.append(max(1, int(base + jitter)))
-
-        median = int(statistics.median(samples))
-        out.append(
-            PromptRecord(
-                prompt_id=rec.prompt_id,
-                text=rec.text,
-                output_length=median,
-                priority=rec.priority,
-                sample_lengths=samples,
-                single_sample_length=base,
-            )
-        )
-    return out
-
-
-def make_pairwise_samples(
-    records: list[PromptRecord],
-    min_length_diff: float = 0.2,
-    use_median: bool = True,
-) -> list[tuple[str, str, int]]:
-    """
-    Build (prompt_a, prompt_b, label) pairs for PARS margin ranking loss.
-
-    When use_median=True (default), pairs come from ProD-M median labels.
+    label=1 means A is longer than B.
+    We skip pairs that are too close in length (same idea as PARS).
     """
     pairs = []
     for i in range(len(records)):
         for j in range(i + 1, len(records)):
-            len_a = records[i].output_length
-            len_b = records[j].output_length
-            max_len = max(len_a, len_b)
-            if max_len == 0:
+            a = records[i].output_length
+            b = records[j].output_length
+            longer = max(a, b)
+            if longer == 0:
+                continue
+            if abs(a - b) / longer < min_diff:
                 continue
 
-            rel_diff = abs(len_a - len_b) / max_len
-            if rel_diff < min_length_diff:
-                continue
-
-            if len_a > len_b:
+            if a > b:
                 pairs.append((records[i].text, records[j].text, 1))
             else:
                 pairs.append((records[j].text, records[i].text, 1))
 
     random.shuffle(pairs)
+    if len(pairs) > max_pairs:
+        pairs = pairs[:max_pairs]
     return pairs
 
 
-def make_single_sample_pairs(
-    records: list[PromptRecord],
-    min_length_diff: float = 0.2,
-) -> list[tuple[str, str, int]]:
-    """Ablation baseline: pairs from one-sample labels (noisy)."""
-    ablation = []
-    for rec in records:
-        single = rec.single_sample_length or rec.output_length
-        ablation.append(
-            PromptRecord(
-                prompt_id=rec.prompt_id,
-                text=rec.text,
-                output_length=single,
-                priority=rec.priority,
-            )
-        )
-    return make_pairwise_samples(ablation, min_length_diff=min_length_diff)
-
-
-def stream_requests(
-    records: list[PromptRecord],
-    arrival_rate: float,
-    seed: int = 42,
-) -> Iterator[tuple[float, PromptRecord]]:
+def poisson_arrivals(records, rate, seed=42):
+    """Yield (arrival_time, record) with exponential inter-arrival times."""
     rng = random.Random(seed)
     t = 0.0
-    for record in records:
-        yield t, record
-        t += rng.expovariate(arrival_rate)
+    for rec in records:
+        yield t, rec
+        t += rng.expovariate(rate)

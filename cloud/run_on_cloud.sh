@@ -1,27 +1,16 @@
 #!/usr/bin/env bash
-# Real ProD-M + PARS pipeline on cloud GPU with Llama 3.1 8B
+# Run the full pipeline on a cloud GPU (Colab / RunPod / etc.)
 #
-# Prerequisites:
-#   export HF_TOKEN=hf_...   (accept Llama license on HuggingFace first)
-#
-# Datasets: GSM8K + MBPP + LMSYS + LongBench
+#   export HF_TOKEN=hf_...
+#   bash cloud/run_on_cloud.sh
 
 set -e
 
 if [ -z "$HF_TOKEN" ] && [ -z "$HUGGING_FACE_HUB_TOKEN" ]; then
-  echo "ERROR: Set HF_TOKEN before running."
-  echo "  export HF_TOKEN=hf_..."
+  echo "ERROR: export HF_TOKEN=hf_... first"
   exit 1
 fi
 
-echo "=== Real ProD-M + PARS (Llama 3.1 8B) ==="
-
 pip install -q -r requirements.txt
-
-python scripts/run_pipeline.py \
-  --dataset all \
-  --limit 400 \
-  --device cuda
-
-echo ""
-echo "Done. Real median labels from Llama -> ProD-M -> PARS -> scheduler eval."
+python scripts/check_setup.py
+python scripts/run_all.py --llm-profile llama32 --limit 100 --device cuda

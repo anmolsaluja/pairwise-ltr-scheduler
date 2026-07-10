@@ -1,66 +1,60 @@
 #!/usr/bin/env python3
-"""Verify GPU, HF token, and dataset access before running the real pipeline."""
-
-from __future__ import annotations
+"""Quick checks before running the real pipeline."""
 
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.utils import get_hf_token
+
 
 def main():
     ok = True
 
-    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-    if token:
+    if get_hf_token():
         print("[ok] HF_TOKEN is set")
     else:
-        print("[FAIL] HF_TOKEN not set — required for Llama 3.1 8B")
+        print("[FAIL] set HF_TOKEN (needed for Llama)")
         ok = False
 
     try:
         import torch
         if torch.cuda.is_available():
-            print(f"[ok] CUDA GPU: {torch.cuda.get_device_name(0)}")
+            print(f"[ok] GPU: {torch.cuda.get_device_name(0)}")
         else:
-            print("[WARN] No CUDA GPU — pipeline needs cloud GPU")
+            print("[WARN] no CUDA GPU — use Colab with GPU runtime")
     except ImportError:
         print("[FAIL] torch not installed")
         ok = False
 
-    try:
-        import bitsandbytes  # noqa: F401
-        print("[ok] bitsandbytes installed (4-bit Llama)")
-    except ImportError:
-        print("[WARN] bitsandbytes missing — pip install bitsandbytes")
-
-    for pkg in ["transformers", "datasets", "accelerate"]:
+    for pkg in ("transformers", "datasets", "accelerate"):
         try:
             __import__(pkg)
-            print(f"[ok] {pkg} installed")
+            print(f"[ok] {pkg}")
         except ImportError:
-            print(f"[FAIL] {pkg} not installed")
+            print(f"[FAIL] {pkg} missing")
             ok = False
 
-    print("\nDatasets (quick load test):")
     try:
-        from src.datasets import load_gsm8k, load_math, load_livecodebench, load_wildchat, load_longbench_v2
-        gsm = load_gsm8k(limit=2)
-        math = load_math(limit=2)
-        lcb = load_livecodebench(limit=2)
-        wc = load_wildchat(limit=2)
-        lb = load_longbench_v2(limit=2)
-        print(f"[ok] GSM8K ({len(gsm)}), MATH ({len(math)}), LiveCodeBench ({len(lcb)})")
-        print(f"[ok] WildChat ({len(wc)}), LongBench-v2 ({len(lb)})")
+        import bitsandbytes  # noqa: F401
+        print("[ok] bitsandbytes")
+    except ImportError:
+        print("[WARN] bitsandbytes missing (needed for 4-bit on GPU)")
+
+    print("\nTrying a tiny dataset load...")
+    try:
+        from src.datasets import load_gsm8k
+        rows = load_gsm8k(limit=2)
+        print(f"[ok] gsm8k loaded ({len(rows)} rows)")
     except Exception as e:
-        print(f"[FAIL] dataset load: {e}")
+        print(f"[FAIL] dataset: {e}")
         ok = False
 
     if ok:
-        print("\nReady. Run: python scripts/run_pipeline.py --device cuda")
+        print("\nReady. Next: python scripts/run_all.py --limit 50 --device cuda")
     else:
-        print("\nFix the issues above, then run the pipeline.")
+        print("\nFix the failures above first.")
         sys.exit(1)
 
 

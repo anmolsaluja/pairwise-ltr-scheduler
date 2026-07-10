@@ -9,6 +9,3 @@ pyyaml>=6.0
 tqdm>=4.65.0
 sentencepiece>=0.2.0
 protobuf>=4.25.0
-
-# Stretch goal: real vLLM serving integration
-# vllm>=0.6.0

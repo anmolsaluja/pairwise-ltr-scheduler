@@ -1,6 +1,4 @@
-"""
-Metrics for comparing FCFS vs LTR vs Pairwise LTR.
-"""
+"""Latency / ranking metrics used in the evaluation."""
 
 from __future__ import annotations
 
@@ -30,62 +28,54 @@ class RunSummary:
     throughput_rps: float
 
 
-def percentile(values: list[float], p: float) -> float:
+def percentile(values, p):
     if not values:
         return 0.0
-    sorted_vals = sorted(values)
-    idx = int(len(sorted_vals) * p / 100)
-    idx = min(idx, len(sorted_vals) - 1)
-    return sorted_vals[idx]
+    vals = sorted(values)
+    i = min(int(len(vals) * p / 100), len(vals) - 1)
+    return vals[i]
 
 
-def summarize(policy: str, rows: list[RequestMetrics], total_time: float) -> RunSummary:
-    latencies = [r.total_latency for r in rows]
+def summarize(policy, rows, total_time):
+    lats = [r.total_latency for r in rows]
     waits = [r.wait_time for r in rows]
-
     return RunSummary(
         policy=policy,
         num_requests=len(rows),
-        avg_latency=statistics.mean(latencies) if latencies else 0.0,
-        p50_latency=percentile(latencies, 50),
-        p95_latency=percentile(latencies, 95),
-        p99_latency=percentile(latencies, 99),
+        avg_latency=statistics.mean(lats) if lats else 0.0,
+        p50_latency=percentile(lats, 50),
+        p95_latency=percentile(lats, 95),
+        p99_latency=percentile(lats, 99),
         avg_wait=statistics.mean(waits) if waits else 0.0,
-        throughput_rps=len(rows) / total_time if total_time > 0 else 0.0,
+        throughput_rps=(len(rows) / total_time) if total_time > 0 else 0.0,
     )
 
 
-def mean_absolute_error(true_lengths: list[float], pred_lengths: list[float]) -> float:
-    if not true_lengths:
+def mae(true_vals, pred_vals):
+    if not true_vals:
         return 0.0
-    return sum(abs(t - p) for t, p in zip(true_lengths, pred_lengths)) / len(true_lengths)
+    return sum(abs(t - p) for t, p in zip(true_vals, pred_vals)) / len(true_vals)
 
 
-def kendall_tau(predicted_order: list[int], true_order: list[int]) -> float:
+def kendall_tau(pred_order, true_order):
     """
-    Ranking quality metric from the LTR papers.
-
-    predicted_order / true_order = list of output lengths sorted by each method.
+    Ranking quality (used in the LTR papers).
+    Both lists should be lengths ordered by the ranking method / ground truth.
     """
-    n = len(predicted_order)
+    n = len(pred_order)
     if n < 2:
         return 0.0
 
-    concordant = 0
-    discordant = 0
-
+    conc = disc = 0
     for i in range(n):
         for j in range(i + 1, n):
-            pred_sign = predicted_order[i] - predicted_order[j]
-            true_sign = true_order[i] - true_order[j]
-            if pred_sign == 0 or true_sign == 0:
+            ps = pred_order[i] - pred_order[j]
+            ts = true_order[i] - true_order[j]
+            if ps == 0 or ts == 0:
                 continue
-            if pred_sign * true_sign > 0:
-                concordant += 1
+            if ps * ts > 0:
+                conc += 1
             else:
-                discordant += 1
-
-    total = concordant + discordant
-    if total == 0:
-        return 0.0
-    return (concordant - discordant) / total
+                disc += 1
+    total = conc + disc
+    return 0.0 if total == 0 else (conc - disc) / total
