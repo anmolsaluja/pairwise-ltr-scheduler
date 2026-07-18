@@ -14,7 +14,7 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data import build_pairs, load_labels
-from src.ranker import PairwiseRanker, ranking_loss, save_ranker
+from src.ranker import PairwiseRanker, load_ranker, ranking_loss, save_ranker
 from src.utils import load_config
 
 
@@ -43,6 +43,12 @@ def main():
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--train-samples", type=int, default=None)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="load --output if it already exists and keep training from there "
+        "(use after a disconnect instead of restarting from scratch)",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -70,6 +76,10 @@ def main():
     )
 
     model = PairwiseRanker(cfg["model"]["backbone"]).to(args.device)
+    if args.resume and os.path.exists(args.output):
+        print(f"Resuming from {args.output}")
+        model = load_ranker(args.output, device=args.device)
+
     opt = torch.optim.Adam(model.parameters(), lr=cfg["training"]["learning_rate"])
 
     model.train()
@@ -88,10 +98,15 @@ def main():
             opt.step()
             total += loss.item()
             n += 1
-        print(f"epoch {epoch + 1} loss={total / max(n, 1):.4f}")
+        avg_loss = total / max(n, 1)
+        print(f"epoch {epoch + 1} loss={avg_loss:.4f}")
 
-    save_ranker(model, args.output)
-    print(f"Saved {args.output}")
+        # Save after every epoch, not just at the end, so a disconnect
+        # mid-training only costs the current epoch, not the whole run.
+        save_ranker(model, args.output)
+        print(f"  checkpoint saved -> {args.output}")
+
+    print(f"Done. Final checkpoint at {args.output}")
 
 
 if __name__ == "__main__":
