@@ -1,0 +1,77 @@
+# Full-scale run for final report results.
+# Matches the presentation's stated served model (Llama-3.1-8B) and uses
+# a larger, more balanced prompt sample than the quick dev config.
+#
+# Usage:
+#   python scripts/run_all.py --config configs/full_run.yaml --device cuda
+#
+# Needs an A100/L4-class GPU (8B model in 4-bit + hidden-state extraction).
+# On a single T4, keep llm.profile: llama32 in configs/default.yaml instead.
+
+model:
+  backbone: bert-base-uncased
+  margin: 1.0
+  min_length_diff: 0.2
+
+llm:
+  profile: llama31
+  load_in_4bit: true
+  max_prompt_tokens: 4096
+  profiles:
+    llama32:
+      model: meta-llama/Llama-3.2-3B-Instruct
+      max_new_tokens: 512
+    llama31:
+      model: meta-llama/Meta-Llama-3.1-8B-Instruct
+      max_new_tokens: 512
+    qwen25:
+      model: Qwen/Qwen2.5-7B-Instruct
+      max_new_tokens: 512
+    deepseek_r1:
+      model: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+      max_new_tokens: 2048
+
+prod_m:
+  num_samples: 5
+  num_bins: 32
+  max_length: 2048
+  max_new_tokens: 512
+  temperature: 0.7
+  top_p: 0.9
+  epochs: 15
+  batch_size: 16
+  learning_rate: 0.001
+  encode_batch_size: 4
+
+training:
+  epochs: 8
+  batch_size: 16
+  learning_rate: 0.00002
+  max_prompt_length: 512
+  max_pairs: 20000
+
+datasets:
+  name: all
+  limit: 500
+  per_dataset:
+    gsm8k: 100
+    math: 100
+    livecodebench: 100
+    wildchat: 100
+    longbench: 100
+  eval_limit: 500
+
+scheduler:
+  policy: pars
+  batch_size: 8
+  starvation_seconds: 120
+
+priority:
+  high_boost: -3.0
+  normal_boost: 0.0
+  low_boost: 3.0
+
+simulation:
+  num_requests: 500
+  arrival_rate: 8.0
+  seed: 42

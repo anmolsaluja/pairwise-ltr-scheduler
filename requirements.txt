@@ -9,3 +9,7 @@ pyyaml>=6.0
 tqdm>=4.65.0
 sentencepiece>=0.2.0
 protobuf>=4.25.0
+
+# Optional: only needed for scripts/vllm_integration.py (real serving stretch goal).
+# Requires a GPU box (won't install/run on CPU-only Colab or a laptop).
+# vllm>=0.8.0

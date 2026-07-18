@@ -79,3 +79,67 @@ def kendall_tau(pred_order, true_order):
                 disc += 1
     total = conc + disc
     return 0.0 if total == 0 else (conc - disc) / total
+
+
+def pairwise_accuracy(pred_scores, true_lengths):
+    """
+    Fraction of prompt pairs where the predicted score correctly orders
+    which one has the longer true output. This is the direct "pairwise
+    ranking accuracy" metric from the proposal (distinct from Kendall's
+    Tau, which is a correlation rather than a plain accuracy count).
+    """
+    n = len(pred_scores)
+    if n < 2:
+        return 0.0
+
+    correct = total = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            true_diff = true_lengths[i] - true_lengths[j]
+            if true_diff == 0:
+                continue  # tie in ground truth, not a valid comparison
+            pred_diff = pred_scores[i] - pred_scores[j]
+            if pred_diff == 0:
+                continue  # model didn't express a preference
+            total += 1
+            if (true_diff > 0) == (pred_diff > 0):
+                correct += 1
+    return 0.0 if total == 0 else correct / total
+
+
+def ndcg_at_k(pred_scores, true_lengths, k=None):
+    """
+    NDCG over the ranking induced by pred_scores, using true output
+    length as relevance. Longer outputs are treated as "more relevant"
+    to keep this consistent with SJF-style evaluation (we care whether
+    the model correctly identifies the longest/shortest jobs near the
+    top of its ranking, not just an aggregate correlation).
+
+    k defaults to the full list length (i.e. standard NDCG, not NDCG@k).
+    """
+    n = len(pred_scores)
+    if n == 0:
+        return 0.0
+    k = k or n
+
+    # DCG using the model's predicted ordering (descending score = "most confident longest")
+    order = sorted(range(n), key=lambda i: pred_scores[i], reverse=True)
+    dcg = 0.0
+    for rank, idx in enumerate(order[:k], start=1):
+        rel = true_lengths[idx]
+        dcg += rel / _log2(rank + 1)
+
+    # Ideal DCG using the best possible ordering (true lengths, descending)
+    ideal_order = sorted(range(n), key=lambda i: true_lengths[i], reverse=True)
+    idcg = 0.0
+    for rank, idx in enumerate(ideal_order[:k], start=1):
+        rel = true_lengths[idx]
+        idcg += rel / _log2(rank + 1)
+
+    return 0.0 if idcg == 0 else dcg / idcg
+
+
+def _log2(x):
+    import math
+
+    return math.log2(x)

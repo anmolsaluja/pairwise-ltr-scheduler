@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data import load_labels
-from src.metrics import kendall_tau, mae
+from src.metrics import kendall_tau, mae, ndcg_at_k, pairwise_accuracy
 from src.prod_m import load_hidden, load_prod_m
 from src.ranker import load_ranker
 from src.simulate import SimConfig, compare
@@ -78,7 +78,9 @@ def main():
         lengths = [r.output_length for r in records]
         scores = ranker.score([r.text for r in records])
         order = [lengths[i] for i in sorted(range(len(scores)), key=lambda k: scores[k])]
-        print(f"PARS Kendall Tau: {kendall_tau(order, sorted(lengths)):.3f}")
+        print(f"PARS Kendall Tau:        {kendall_tau(order, sorted(lengths)):.3f}")
+        print(f"PARS Pairwise Accuracy:  {pairwise_accuracy(scores, lengths):.3f}")
+        print(f"PARS NDCG:               {ndcg_at_k(scores, lengths):.3f}")
 
     boosts = {
         "high": cfg["priority"]["high_boost"],
