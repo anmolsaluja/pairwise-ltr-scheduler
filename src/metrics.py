@@ -25,7 +25,12 @@ class RunSummary:
     p95_latency: float
     p99_latency: float
     avg_wait: float
+    avg_ttft: float
     throughput_rps: float
+
+
+# rough prefill time used when we approximate TTFT in the simulator
+PREFILL_TIME = 0.05
 
 
 def percentile(values, p):
@@ -36,9 +41,11 @@ def percentile(values, p):
     return vals[i]
 
 
-def summarize(policy, rows, total_time):
+def summarize(policy, rows, total_time, prefill=PREFILL_TIME):
     lats = [r.total_latency for r in rows]
     waits = [r.wait_time for r in rows]
+    # TTFT ~= queue wait + prefill (first token after prompt is processed)
+    ttfts = [r.wait_time + prefill for r in rows]
     return RunSummary(
         policy=policy,
         num_requests=len(rows),
@@ -47,6 +54,7 @@ def summarize(policy, rows, total_time):
         p95_latency=percentile(lats, 95),
         p99_latency=percentile(lats, 99),
         avg_wait=statistics.mean(waits) if waits else 0.0,
+        avg_ttft=statistics.mean(ttfts) if ttfts else 0.0,
         throughput_rps=(len(rows) / total_time) if total_time > 0 else 0.0,
     )
 

@@ -5,7 +5,11 @@ Run the full project pipeline end-to-end.
   1) generate median labels with Llama
   2) train ProD-M
   3) train pairwise ranker
-  4) compare FCFS / ProD-M / PARS
+  4) compare FCFS / ProD-M / PARS / Oracle
+
+After this finishes, for the report also run:
+  python scripts/eval_ood.py --device cuda
+  python scripts/ablation_labels.py --device cuda
 
 Example (Colab):
   export HF_TOKEN=hf_...

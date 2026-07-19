@@ -4,8 +4,10 @@ Schedulers compared in this project:
   fcfs      - first come first serve (baseline, suffers from HOL blocking)
   prod_m    - sort by ProD-M predicted length (pointwise LTR / SJF)
   pars      - sort by pairwise ranker score (our proposal extension)
+  oracle    - sort by true output length (upper bound for SJF)
 
-Priority boosts and a simple starvation rule are applied on top.
+Priority boosts and a simple starvation rule are applied on top
+(PARS paper ~2 min wait threshold).
 """
 
 from __future__ import annotations
@@ -39,21 +41,25 @@ class Scheduler:
             if now - req.arrival_time >= self.starvation_sec:
                 req.priority = "high"
 
-    def next_batch(self, now=0.0):
+    def next_batch(self, now=0.0, n=None):
+        """Pick up to n requests (default = batch_size)."""
         self._maybe_promote(now)
+        n = self.batch_size if n is None else max(0, n)
+        if n == 0 or not self.waiting:
+            return []
 
         if self.policy == "fcfs":
-            batch = self.waiting[: self.batch_size]
-            self.waiting = self.waiting[self.batch_size :]
+            batch = self.waiting[:n]
+            self.waiting = self.waiting[n:]
             return batch
 
-        # both prod_m and pars just sort by effective_score
+        # prod_m / pars / oracle: lowest effective score first (approx SJF)
         heap = []
         for req in self.waiting:
             heapq.heappush(heap, _Item(key=req.effective_score(self.boosts), req=req))
 
         batch = []
-        for _ in range(min(self.batch_size, len(heap))):
+        for _ in range(min(n, len(heap))):
             batch.append(heapq.heappop(heap).req)
 
         picked = {r.request_id for r in batch}

@@ -32,7 +32,7 @@ def _service_time(req):
     return PREFILL + req.output_length * PER_TOKEN
 
 
-def _score_requests(records, ranker=None, prod_m=None, hidden=None, device="cpu"):
+def _score_requests(records, policy="fcfs", ranker=None, prod_m=None, hidden=None, device="cpu"):
     reqs = []
     for rec in records:
         reqs.append(
@@ -43,6 +43,13 @@ def _score_requests(records, ranker=None, prod_m=None, hidden=None, device="cpu"
                 priority=parse_priority(rec.priority),
             )
         )
+
+    # oracle SJF: cheat with the true median length (upper bound)
+    if policy == "oracle":
+        for req in reqs:
+            req.rank_score = float(req.output_length)
+            req.predicted_length = req.output_length
+        return reqs
 
     if ranker is not None:
         ranker.to(device)
@@ -61,13 +68,22 @@ def _score_requests(records, ranker=None, prod_m=None, hidden=None, device="cpu"
 
 
 def run_sim(records, config, ranker=None, prod_m=None, hidden=None, device="cpu"):
+    # oracle / prod_m / pars all use the length-aware heap; only fcfs is different
+    sched_policy = "fcfs" if config.policy == "fcfs" else "pars"
     sched = Scheduler(
-        policy=config.policy,
+        policy=sched_policy,
         batch_size=config.batch_size,
         boosts=config.boosts,
     )
 
-    all_reqs = _score_requests(records, ranker, prod_m, hidden, device)
+    all_reqs = _score_requests(
+        records,
+        policy=config.policy,
+        ranker=ranker,
+        prod_m=prod_m,
+        hidden=hidden,
+        device=device,
+    )
     by_id = {r.request_id: r for r in all_reqs}
 
     arrivals = list(poisson_arrivals(records, config.arrival_rate, config.seed))
@@ -107,7 +123,7 @@ def run_sim(records, config, ranker=None, prod_m=None, hidden=None, device="cpu"
         # start new work if we have free slots
         free = config.batch_size - len(active)
         if free > 0 and sched.waiting:
-            for req in sched.next_batch(now=clock)[:free]:
+            for req in sched.next_batch(now=clock, n=free):
                 active.append((clock + _service_time(req), req))
 
         next_arr = arrivals[idx][0] if idx < len(arrivals) else float("inf")
@@ -132,6 +148,7 @@ def compare(records, policies, config, ranker=None, prod_m=None, hidden=None, de
         )
         use_pars = policy in ("pars", "prod_m_pars", "pairwise_ltr")
         use_prod = policy in ("prod_m", "ltr")
+        # oracle / fcfs don't need a trained model
         results.append(
             run_sim(
                 records,

@@ -68,7 +68,16 @@ def load_labels(path):
     return records, payload.get("meta", {})
 
 
-def build_pairs(records, min_diff=0.2, max_pairs=5000):
+def _length_for_pairs(rec, use_single_sample=False):
+    # ablation: single-sample labels are noisier than the ProD-M median
+    if use_single_sample:
+        return rec.single_sample_length or (
+            rec.sample_lengths[0] if rec.sample_lengths else rec.output_length
+        )
+    return rec.output_length
+
+
+def build_pairs(records, min_diff=0.2, max_pairs=5000, use_single_sample=False):
     """
     Build (prompt_a, prompt_b, label) for margin ranking.
 
@@ -78,8 +87,8 @@ def build_pairs(records, min_diff=0.2, max_pairs=5000):
     pairs = []
     for i in range(len(records)):
         for j in range(i + 1, len(records)):
-            a = records[i].output_length
-            b = records[j].output_length
+            a = _length_for_pairs(records[i], use_single_sample)
+            b = _length_for_pairs(records[j], use_single_sample)
             longer = max(a, b)
             if longer == 0:
                 continue
@@ -95,6 +104,39 @@ def build_pairs(records, min_diff=0.2, max_pairs=5000):
     if len(pairs) > max_pairs:
         pairs = pairs[:max_pairs]
     return pairs
+
+
+def dataset_tag(prompt_id):
+    """gsm8k_12 -> gsm8k. Used for ID / OOD splits."""
+    if "_" not in prompt_id:
+        return "unknown"
+    return prompt_id.split("_", 1)[0]
+
+
+def split_id_ood(records, id_datasets=None, ood_datasets=None):
+    """
+    Split labeled prompts into in-distribution vs out-of-distribution.
+
+    Default (matches our midterm plan):
+      ID  = math-ish sets (gsm8k, math)
+      OOD = chat / long-context / coding (wildchat, longbench, livecodebench)
+    """
+    id_datasets = set(id_datasets or ("gsm8k", "math"))
+    ood_datasets = set(ood_datasets or ("wildchat", "lb2", "longbench", "lcb", "livecodebench"))
+
+    id_recs, ood_recs = [], []
+    for rec in records:
+        tag = dataset_tag(rec.prompt_id)
+        # livecodebench ids look like lcb_...
+        if tag == "lcb":
+            tag = "livecodebench"
+        if tag == "lb2":
+            tag = "longbench"
+        if tag in id_datasets:
+            id_recs.append(rec)
+        elif tag in ood_datasets:
+            ood_recs.append(rec)
+    return id_recs, ood_recs
 
 
 def poisson_arrivals(records, rate, seed=42):

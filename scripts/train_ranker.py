@@ -49,6 +49,12 @@ def main():
         help="load --output if it already exists and keep training from there "
         "(use after a disconnect instead of restarting from scratch)",
     )
+    parser.add_argument(
+        "--ablation-single-sample",
+        action="store_true",
+        help="train on single-sample lengths instead of ProD-M medians "
+        "(ablation from the midterm slides)",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -62,8 +68,10 @@ def main():
         records,
         min_diff=cfg["model"]["min_length_diff"],
         max_pairs=cfg["training"].get("max_pairs", 5000),
+        use_single_sample=args.ablation_single_sample,
     )
-    print(f"Built {len(pairs)} training pairs from {len(records)} prompts")
+    label_kind = "single-sample" if args.ablation_single_sample else "median"
+    print(f"Built {len(pairs)} training pairs from {len(records)} prompts ({label_kind} labels)")
     if not pairs:
         print("No pairs — try lowering min_length_diff or using more prompts")
         sys.exit(1)
