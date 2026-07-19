@@ -1,11 +1,9 @@
 """
-Schedulers we compare:
+Schedulers:
 
-  fcfs    - First-Come-First-Serve (baseline)
-  ltr     - Main-paper style pointwise LTR (single-sample length training)
-  prod_m  - Our ProD-M pointwise predictor (median labels) — NOT in the main paper
-  pars    - Our pairwise ranking + priority + starvation
-  oracle  - Perfect SJF with true median length
+  fcfs  - baseline
+  ltr   - main-paper pointwise LTR
+  pars  - ours (PARS ranking + priority + starvation; trained with ProD-M medians)
 """
 
 from __future__ import annotations

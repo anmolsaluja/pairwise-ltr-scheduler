@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Step 4: compare schedulers the way the proposal describes.
+Compare exactly three schedulers (proposal evaluation plan):
 
-  FCFS   - baseline
-  LTR    - MAIN PAPER style (pointwise, trained on single-sample lengths)
-  ProD-M - OUR robust pointwise predictor (median labels) — not in main paper
-  PARS   - OUR pairwise ranking + priority + starvation
-  Oracle - upper bound (true median lengths)
+  1) FCFS                          - baseline
+  2) LTR                           - MAIN PAPER (pointwise, single-sample labels)
+  3) PARS + ProD-M + Priority      - OURS
+       - ProD-M: median-of-r labels (not in main paper)
+       - PARS: pairwise ranking
+       - Priority + starvation in the scheduler
 """
 
 from __future__ import annotations
@@ -26,10 +27,8 @@ from src.utils import load_config
 
 POLICY_TITLE = {
     "fcfs": "FCFS (baseline)",
-    "ltr": "LTR pointwise (MAIN PAPER style, single-sample labels)",
-    "prod_m": "ProD-M pointwise (OURS: median labels — not in main paper)",
-    "pars": "PARS pairwise (OURS: ranking + priority)",
-    "oracle": "Oracle SJF (true median length, upper bound)",
+    "ltr": "LTR scheduler (MAIN PAPER)",
+    "pars": "PARS + ProD-M + Priority (OURS)",
 }
 
 
@@ -57,10 +56,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
     parser.add_argument("--labels", default="data/processed/prod_labels.json")
-    parser.add_argument("--ltr", default="checkpoints/ltr_pointwise.pt",
-                        help="main-paper style pointwise model (single-sample)")
-    parser.add_argument("--prod-m", default="checkpoints/prod_m.pt",
-                        help="our ProD-M model (median)")
+    parser.add_argument("--ltr", default="checkpoints/ltr_pointwise.pt")
     parser.add_argument("--ranker", default="checkpoints/pairwise_ranker.pt")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--limit", type=int, default=None)
@@ -75,6 +71,7 @@ def main():
     limit = args.limit or cfg["datasets"].get("eval_limit", len(records))
     records = records[:limit]
 
+    # Priority is part of OURS (PARS + ProD-M + Priority)
     n_high = n_low = 0
     for i, rec in enumerate(records):
         if i % 8 == 0:
@@ -84,12 +81,11 @@ def main():
             rec.priority = "low"
             n_low += 1
     print(
-        f"Priority mix: high={n_high}, low={n_low}, "
+        f"Priority mix (used by OURS): high={n_high}, low={n_low}, "
         f"normal={len(records) - n_high - n_low}"
     )
 
     ltr_model = load_prod_m(args.ltr, device=args.device) if os.path.exists(args.ltr) else None
-    prod_m = load_prod_m(args.prod_m, device=args.device) if os.path.exists(args.prod_m) else None
     ranker = load_ranker(args.ranker, device=args.device) if os.path.exists(args.ranker) else None
 
     hidden = None
@@ -99,28 +95,22 @@ def main():
 
     true = [r.output_length for r in records]
 
-    print("\n--- 1) Prediction / ranking quality ---")
-    print("Note: ProD-M is OUR addition (ProD paper). It is NOT in the main LTR paper.")
+    print("\n--- 1) Model quality ---")
+    print("OURS uses ProD-M median labels to train PARS (ProD-M is not in the main paper).")
     if ltr_model is not None and hidden is not None:
-        print(f"LTR  (single-sample train) MAE vs median: "
-              f"{mae(true, ltr_model.predict_lengths(hidden.to(args.device))):.2f}")
+        print(
+            "LTR MAE vs median: "
+            f"{mae(true, ltr_model.predict_lengths(hidden.to(args.device))):.2f} tokens"
+        )
     else:
-        print("LTR checkpoint missing — run: python scripts/train_prod_m.py --target single "
-              "--output checkpoints/ltr_pointwise.pt")
-
-    if prod_m is not None and hidden is not None:
-        print(f"ProD-M (median train)      MAE vs median: "
-              f"{mae(true, prod_m.predict_lengths(hidden.to(args.device))):.2f}")
-    else:
-        print("ProD-M checkpoint missing")
+        print("LTR checkpoint missing — run train_prod_m.py --target single")
 
     if ranker is not None:
-        lengths = true
         scores = ranker.score([r.text for r in records])
-        order = [lengths[i] for i in sorted(range(len(scores)), key=lambda k: scores[k])]
-        print(f"PARS Kendall Tau:       {kendall_tau(order, sorted(lengths)):.3f}")
-        print(f"PARS Pairwise Accuracy: {pairwise_accuracy(scores, lengths):.3f}")
-        print(f"PARS NDCG:              {ndcg_at_k(scores, lengths):.3f}")
+        order = [true[i] for i in sorted(range(len(scores)), key=lambda k: scores[k])]
+        print(f"OURS (PARS) Kendall Tau:       {kendall_tau(order, sorted(true)):.3f}")
+        print(f"OURS (PARS) Pairwise Accuracy: {pairwise_accuracy(scores, true):.3f}")
+        print(f"OURS (PARS) NDCG:              {ndcg_at_k(scores, true):.3f}")
     else:
         print("PARS checkpoint missing")
 
@@ -129,30 +119,37 @@ def main():
         "normal": cfg["priority"]["normal_boost"],
         "low": cfg["priority"]["low_boost"],
     }
-    sim_cfg = SimConfig(
-        batch_size=cfg["scheduler"]["batch_size"],
-        arrival_rate=cfg["simulation"]["arrival_rate"],
-        seed=cfg["simulation"]["seed"],
-        boosts=boosts,
-    )
+    # Main-paper LTR: no priority boosts (fair comparison to paper setting)
+    ltr_boosts = {"high": 0.0, "normal": 0.0, "low": 0.0}
 
-    print("\n--- 2) Scheduler comparison ---")
-    print("FCFS  = baseline")
-    print("LTR   = main paper (pointwise, single-sample labels)")
-    print("ProD-M = our robust pointwise (median labels)")
-    print("PARS  = our pairwise improvement (+ priority)")
-    print("Oracle = upper bound")
+    print("\n--- 2) Scheduler comparison (3 methods only) ---")
+    print("1. FCFS                         = baseline")
+    print("2. LTR                          = MAIN PAPER")
+    print("3. PARS + ProD-M + Priority     = OURS")
 
-    summaries = compare(
-        records,
-        ["fcfs", "ltr", "prod_m", "pars", "oracle"],
-        sim_cfg,
-        ranker=ranker,
-        ltr_model=ltr_model,
-        prod_m=prod_m,
-        hidden=hidden,
-        device=args.device,
-    )
+    # Run FCFS and LTR without priority; OURS with priority boosts
+    summaries = []
+    for policy, b in (("fcfs", ltr_boosts), ("ltr", ltr_boosts), ("pars", boosts)):
+        cfg_one = SimConfig(
+            policy=policy,
+            batch_size=cfg["scheduler"]["batch_size"],
+            arrival_rate=cfg["simulation"]["arrival_rate"],
+            seed=cfg["simulation"]["seed"],
+            boosts=b,
+        )
+        summaries.extend(
+            compare(
+                records,
+                [policy],
+                cfg_one,
+                ranker=ranker,
+                ltr_model=ltr_model,
+                prod_m=None,
+                hidden=hidden,
+                device=args.device,
+            )
+        )
+
     for s in summaries:
         print_summary(s)
 
@@ -166,10 +163,8 @@ def main():
 
     print("\n--- p95 latency improvements ---")
     show("LTR vs FCFS", "fcfs", "ltr")
-    show("ProD-M vs LTR (median labels help pointwise)", "ltr", "prod_m")
-    show("PARS vs LTR (our pairwise vs main paper)", "ltr", "pars")
-    show("PARS vs ProD-M", "prod_m", "pars")
-    show("PARS vs FCFS", "fcfs", "pars")
+    show("OURS vs LTR (main paper)", "ltr", "pars")
+    show("OURS vs FCFS", "fcfs", "pars")
 
 
 if __name__ == "__main__":

@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-Run the full project pipeline end-to-end.
+Full pipeline — three-way comparison only:
 
-  1) sample Llama r times -> median labels (+ keep single-sample)
-  2) train LTR pointwise on SINGLE-sample labels  (main-paper style)
-  3) train ProD-M pointwise on MEDIAN labels      (ours — not in main paper)
-  4) train PARS pairwise on median pairs          (ours)
-  5) compare FCFS vs LTR vs ProD-M vs PARS vs Oracle
+  FCFS  |  LTR (main paper)  |  PARS + ProD-M + Priority (ours)
 
-Example (Colab):
-  export HF_TOKEN=hf_...
-  python scripts/run_all.py --limit 50 --device cuda
+Steps:
+  1) Llama x r -> median labels (ProD-M supervision for ours)
+  2) train LTR on single-sample labels (main paper style)
+  3) train PARS on median pairs (ours)
+  4) evaluate the three schedulers
+
+Example:
+  python scripts/run_all.py --limit 100 --device cuda
 """
 
 from __future__ import annotations
@@ -40,7 +41,6 @@ def main():
     parser.add_argument("--skip-train", action="store_true")
     parser.add_argument("--labels", default="data/processed/prod_labels.json")
     parser.add_argument("--ltr", default="checkpoints/ltr_pointwise.pt")
-    parser.add_argument("--prod-m", default="checkpoints/prod_m.pt")
     parser.add_argument("--ranker", default="checkpoints/pairwise_ranker.pt")
     args = parser.parse_args()
 
@@ -55,11 +55,12 @@ def main():
 
     print(f"Using {llm['profile']} -> {llm['model']}")
     print(f"Dataset={dataset}, limit={limit}, device={args.device}")
-    print("Plan: FCFS | LTR(main paper) | ProD-M(ours) | PARS(ours) | Oracle")
+    print("Compare: FCFS | LTR (main paper) | PARS+ProD-M+Priority (ours)")
 
     py = sys.executable
 
     if not args.skip_train:
+        # ProD-M labeling step (medians) — used by OURS, not a separate scheduler
         run([
             py, "scripts/generate_labels.py",
             "--dataset", dataset,
@@ -68,7 +69,7 @@ def main():
             "--device", args.device,
             "--llm-profile", llm["profile"],
         ])
-        # main-paper style LTR (single-sample supervision)
+        # Main-paper LTR
         run([
             py, "scripts/train_prod_m.py",
             "--labels", args.labels,
@@ -76,15 +77,7 @@ def main():
             "--output", args.ltr,
             "--device", args.device,
         ])
-        # our ProD-M (median supervision)
-        run([
-            py, "scripts/train_prod_m.py",
-            "--labels", args.labels,
-            "--target", "median",
-            "--output", args.prod_m,
-            "--device", args.device,
-        ])
-        # our PARS pairwise ranker
+        # Ours: PARS trained on ProD-M median pairs
         run([
             py, "scripts/train_ranker.py",
             "--labels", args.labels,
@@ -97,7 +90,6 @@ def main():
         py, "scripts/evaluate.py",
         "--labels", args.labels,
         "--ltr", args.ltr,
-        "--prod-m", args.prod_m,
         "--ranker", args.ranker,
         "--device", args.device,
         "--limit", str(limit),

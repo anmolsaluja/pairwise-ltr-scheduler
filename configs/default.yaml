@@ -1,5 +1,5 @@
 # Capstone config
-# FCFS | LTR (main paper, single-sample) | ProD-M (ours, median) | PARS (ours) | Oracle
+# Compare: FCFS | LTR (main paper) | PARS+ProD-M+Priority (ours)
 
 model:
   backbone: bert-base-uncased

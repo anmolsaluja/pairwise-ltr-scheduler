@@ -1,12 +1,12 @@
 """
-Discrete-event simulator for comparing scheduling policies.
+Discrete-event simulator.
 
-Policies (proposal / midterm evaluation plan):
-  fcfs    - arrival order (baseline)
-  ltr     - MAIN PAPER style: pointwise length prediction on single-sample labels
-  prod_m  - OUR robust pointwise predictor (ProD-M median labels)  [not in main paper]
-  pars    - OUR pairwise ranker + priority + starvation
-  oracle  - true median lengths (upper bound)
+Main comparison (three methods):
+  fcfs  - baseline
+  ltr   - MAIN PAPER pointwise LTR (single-sample labels)
+  pars  - OURS: PARS pairwise + ProD-M median training + priority
+
+(prod_m / oracle helpers remain available but are not used in evaluate.py)
 """
 
 from __future__ import annotations
