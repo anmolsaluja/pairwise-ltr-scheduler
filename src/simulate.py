@@ -1,11 +1,12 @@
 """
 Discrete-event simulator for comparing scheduling policies.
 
-Policies:
-  fcfs   - arrival order
-  ltr    - main-paper style pointwise LTR (ProD-M predicted lengths)
-  pars   - our pairwise ranker + priority
-  oracle - true median lengths (upper bound)
+Policies (proposal / midterm evaluation plan):
+  fcfs    - arrival order (baseline)
+  ltr     - MAIN PAPER style: pointwise length prediction on single-sample labels
+  prod_m  - OUR robust pointwise predictor (ProD-M median labels)  [not in main paper]
+  pars    - OUR pairwise ranker + priority + starvation
+  oracle  - true median lengths (upper bound)
 """
 
 from __future__ import annotations
@@ -35,14 +36,22 @@ def _service_time(req):
 
 
 def _normalize_policy(policy):
-    if policy == "prod_m":
-        return "ltr"
     if policy in ("pairwise_ltr", "prod_m_pars"):
         return "pars"
+    if policy in ("ltr_pointwise", "main_ltr"):
+        return "ltr"
     return policy
 
 
-def _score_requests(records, policy="fcfs", ranker=None, prod_m=None, hidden=None, device="cpu"):
+def _score_requests(
+    records,
+    policy="fcfs",
+    ranker=None,
+    ltr_model=None,
+    prod_m=None,
+    hidden=None,
+    device="cpu",
+):
     """Fill rank_score used by the length-aware scheduler."""
     policy = _normalize_policy(policy)
     reqs = []
@@ -56,15 +65,23 @@ def _score_requests(records, policy="fcfs", ranker=None, prod_m=None, hidden=Non
             )
         )
 
-    # Oracle: use true median length (best possible SJF)
     if policy == "oracle":
         for req in reqs:
             req.rank_score = float(req.output_length)
             req.predicted_length = req.output_length
         return reqs
 
-    # Main-paper style LTR: pointwise predicted length from ProD-M
-    if policy == "ltr" and prod_m is not None and hidden is not None:
+    # Main-paper style LTR: pointwise model trained on single-sample lengths
+    if policy == "ltr" and ltr_model is not None and hidden is not None:
+        ltr_model.to(device)
+        lengths = ltr_model.predict_lengths(hidden.to(device))
+        for req, length in zip(reqs, lengths):
+            req.rank_score = float(length)
+            req.predicted_length = int(round(length))
+        return reqs
+
+    # Our ProD-M pointwise (median-trained) — separate from the main paper
+    if policy == "prod_m" and prod_m is not None and hidden is not None:
         prod_m.to(device)
         lengths = prod_m.predict_lengths(hidden.to(device))
         for req, length in zip(reqs, lengths):
@@ -72,7 +89,7 @@ def _score_requests(records, policy="fcfs", ranker=None, prod_m=None, hidden=Non
             req.predicted_length = int(round(length))
         return reqs
 
-    # Our method: pairwise ranker score (higher => longer expected output)
+    # Our PARS pairwise method
     if policy == "pars" and ranker is not None:
         ranker.to(device)
         scores = ranker.score([r.prompt for r in reqs])
@@ -83,9 +100,17 @@ def _score_requests(records, policy="fcfs", ranker=None, prod_m=None, hidden=Non
     return reqs
 
 
-def run_sim(records, config, ranker=None, prod_m=None, hidden=None, device="cpu"):
+def run_sim(
+    records,
+    config,
+    ranker=None,
+    ltr_model=None,
+    prod_m=None,
+    hidden=None,
+    device="cpu",
+):
     policy = _normalize_policy(config.policy)
-    sched_policy = "fcfs" if policy == "fcfs" else "ltr"  # any non-fcfs uses score heap
+    sched_policy = "fcfs" if policy == "fcfs" else "ltr"
     sched = Scheduler(
         policy=sched_policy,
         batch_size=config.batch_size,
@@ -96,6 +121,7 @@ def run_sim(records, config, ranker=None, prod_m=None, hidden=None, device="cpu"
         records,
         policy=policy,
         ranker=ranker,
+        ltr_model=ltr_model,
         prod_m=prod_m,
         hidden=hidden,
         device=device,
@@ -149,7 +175,16 @@ def run_sim(records, config, ranker=None, prod_m=None, hidden=None, device="cpu"
     return summarize(policy, done, clock)
 
 
-def compare(records, policies, config, ranker=None, prod_m=None, hidden=None, device="cpu"):
+def compare(
+    records,
+    policies,
+    config,
+    ranker=None,
+    ltr_model=None,
+    prod_m=None,
+    hidden=None,
+    device="cpu",
+):
     results = []
     for policy in policies:
         policy = _normalize_policy(policy)
@@ -160,15 +195,14 @@ def compare(records, policies, config, ranker=None, prod_m=None, hidden=None, de
             seed=config.seed,
             boosts=config.boosts,
         )
-        use_pars = policy == "pars"
-        use_ltr = policy == "ltr"
         results.append(
             run_sim(
                 records,
                 cfg,
-                ranker=ranker if use_pars else None,
-                prod_m=prod_m if use_ltr else None,
-                hidden=hidden if use_ltr else None,
+                ranker=ranker if policy == "pars" else None,
+                ltr_model=ltr_model if policy == "ltr" else None,
+                prod_m=prod_m if policy == "prod_m" else None,
+                hidden=hidden if policy in ("ltr", "prod_m") else None,
                 device=device,
             )
         )

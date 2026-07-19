@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Step 2: train the ProD-M MLP on hidden states + median length bins."""
+"""
+Train a pointwise length predictor (2-layer MLP on Llama hidden states).
+
+Two training modes (important distinction for the report):
+
+  default / --target median
+      ProD-M (OUR addition, from the ProD paper — NOT in the main paper)
+      Train on median-of-r labels.
+
+  --target single
+      Main-paper style LTR supervision: one noisy sample per prompt.
+      Saved separately (e.g. checkpoints/ltr_pointwise.pt).
+"""
 
 from __future__ import annotations
 
@@ -26,6 +38,14 @@ from src.prod_m import (
 from src.utils import load_config, resolve_llm
 
 
+def target_length(rec, target):
+    if target == "single":
+        return rec.single_sample_length or (
+            rec.sample_lengths[0] if rec.sample_lengths else rec.output_length
+        )
+    return rec.output_length  # median
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
@@ -33,6 +53,12 @@ def main():
     parser.add_argument("--output", default="checkpoints/prod_m.pt")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument(
+        "--target",
+        choices=("median", "single"),
+        default="median",
+        help="median = ProD-M (ours); single = main-paper style LTR labels",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -41,10 +67,12 @@ def main():
 
     records, meta = load_labels(args.labels)
     print(f"Loaded {len(records)} labeled prompts")
+    print(f"Training target: {args.target} "
+          f"({'ProD-M / ours' if args.target == 'median' else 'main-paper style LTR'})")
 
     bin_edges = make_bins(cfg["prod_m"]["max_length"], cfg["prod_m"]["num_bins"])
     y = torch.tensor(
-        [length_to_bin(r.output_length, bin_edges) for r in records],
+        [length_to_bin(target_length(r, args.target), bin_edges) for r in records],
         dtype=torch.long,
     )
 
@@ -79,11 +107,16 @@ def main():
         print(f"epoch {epoch + 1} loss={total / max(n, 1):.4f}")
 
     preds = model.predict_lengths(x.to(args.device))
-    true = [r.output_length for r in records]
-    err = mae(true, preds)
-    print(f"train MAE vs median: {err:.2f} tokens")
+    # always report MAE vs median target (stable eval target from ProD-M paper)
+    true_median = [r.output_length for r in records]
+    err = mae(true_median, preds)
+    print(f"MAE vs median lengths: {err:.2f} tokens")
 
-    save_prod_m(model, args.output, meta={"llm": llm["model"], "mae": err})
+    save_prod_m(
+        model,
+        args.output,
+        meta={"llm": llm["model"], "mae_vs_median": err, "train_target": args.target},
+    )
     print(f"Saved {args.output}")
 
 
