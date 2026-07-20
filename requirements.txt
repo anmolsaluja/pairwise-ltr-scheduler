@@ -1,4 +1,10 @@
-torch>=2.0.0
+# NOTE: Do NOT list torch here.
+# On Google Colab, `pip install torch` from PyPI installs a CPU-only build and
+# breaks CUDA. Colab already ships a CUDA torch — leave it alone.
+#
+# Local Mac/Linux: install torch yourself first, then:
+#   pip install -r requirements.txt
+
 transformers>=4.43.0
 datasets>=2.14.0
 accelerate>=0.27.0
@@ -10,6 +16,6 @@ tqdm>=4.65.0
 sentencepiece>=0.2.0
 protobuf>=4.25.0
 
-# Optional: only needed for scripts/vllm_integration.py (real serving stretch goal).
-# Requires a GPU box (won't install/run on CPU-only Colab or a laptop).
+# Live serving (GPU only — install separately, not on CPU Macs):
+#   pip install vllm
 # vllm>=0.8.0

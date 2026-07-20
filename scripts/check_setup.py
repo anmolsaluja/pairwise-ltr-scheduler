@@ -20,10 +20,17 @@ def main():
 
     try:
         import torch
+        print(f"[ok] torch {torch.__version__}")
         if torch.cuda.is_available():
             print(f"[ok] GPU: {torch.cuda.get_device_name(0)}")
         else:
-            print("[WARN] no CUDA GPU — use Colab with GPU runtime")
+            print("[FAIL] torch.cuda.is_available() is False")
+            print("       If you are on Colab: Runtime → GPU, then restart session.")
+            print("       Do NOT `pip install torch` from PyPI (that installs CPU-only).")
+            print("       Repair with:")
+            print("         !pip install -q --upgrade torch --index-url "
+                  "https://download.pytorch.org/whl/cu121")
+            ok = False
     except ImportError:
         print("[FAIL] torch not installed")
         ok = False
@@ -52,7 +59,7 @@ def main():
         ok = False
 
     if ok:
-        print("\nReady. Next: python scripts/run_all.py --limit 50 --device cuda")
+        print("\nReady. Next: chunked labels or run_all.py")
     else:
         print("\nFix the failures above first.")
         sys.exit(1)

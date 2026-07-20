@@ -8,28 +8,48 @@ Used for:
 
 from __future__ import annotations
 
-import os
-
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from src.utils import get_hf_token
 
 
+def _resolve_device(requested):
+    """Use CUDA only if this torch build actually supports it."""
+    requested = (requested or "cuda").lower()
+    if requested == "cpu":
+        return "cpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    raise RuntimeError(
+        "CUDA was requested but this PyTorch build has no GPU support.\n"
+        "Common Colab cause: `pip install torch` replaced Colab's CUDA torch "
+        "with a CPU-only wheel.\n\n"
+        "Fix in Colab:\n"
+        "  1) Runtime → Change runtime type → GPU (T4)\n"
+        "  2) Runtime → Restart session\n"
+        "  3) Reinstall CUDA torch, then our deps WITHOUT torch:\n"
+        "       !pip install -q --upgrade torch --index-url "
+        "https://download.pytorch.org/whl/cu121\n"
+        "       !pip install -q -r requirements.txt\n"
+        "  4) Check: import torch; print(torch.cuda.is_available())  # True"
+    )
+
+
 class LlamaServer:
     def __init__(self, model_name, device="cuda", load_in_4bit=True, max_prompt_tokens=4096):
         self.model_name = model_name
-        self.device = device
+        self.device = _resolve_device(device)
         self.max_prompt_tokens = max_prompt_tokens
         token = get_hf_token()
 
-        print(f"Loading {model_name} (4bit={load_in_4bit})...")
+        print(f"Loading {model_name} (device={self.device}, 4bit={load_in_4bit})...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, token=token)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         kwargs = {"token": token}
-        if load_in_4bit and device != "cpu":
+        if load_in_4bit and self.device != "cpu":
             kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_compute_dtype=torch.float16,
@@ -39,9 +59,9 @@ class LlamaServer:
             kwargs["device_map"] = "auto"
             kwargs["torch_dtype"] = torch.float16
         else:
-            kwargs["torch_dtype"] = torch.float16 if device != "cpu" else torch.float32
-            if device != "cpu":
-                kwargs["device_map"] = device
+            kwargs["torch_dtype"] = torch.float16 if self.device != "cpu" else torch.float32
+            if self.device != "cpu":
+                kwargs["device_map"] = self.device
 
         self.model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
         self.model.eval()
@@ -53,13 +73,18 @@ class LlamaServer:
             messages, tokenize=False, add_generation_prompt=True
         )
 
+    def _input_device(self):
+        # quantized / device_map models expose .device on the root module
+        if hasattr(self.model, "device"):
+            return self.model.device
+        try:
+            return next(self.model.parameters()).device
+        except StopIteration:
+            return torch.device(self.device if self.device != "cuda" else "cuda:0")
+
     def _to_device(self, batch):
-        # with device_map="auto" the model may sit on cuda:0
-        if hasattr(self.model, "hf_device_map"):
-            return {k: v.to(self.model.device) for k, v in batch.items()}
-        if self.device != "cpu":
-            return {k: v.to(self.device) for k, v in batch.items()}
-        return batch
+        device = self._input_device()
+        return {k: v.to(device) for k, v in batch.items()}
 
     @torch.no_grad()
     def generate_lengths(self, prompt, num_samples, max_new_tokens, temperature, top_p):

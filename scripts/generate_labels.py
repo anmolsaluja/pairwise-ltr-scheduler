@@ -69,6 +69,12 @@ def main():
         default="",
         help="optional folder (e.g. Drive) to copy labels/hidden after each chunk",
     )
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=None,
+        help="override prod_m.num_samples (use 3 for faster 1k-scale labeling)",
+    )
     args = parser.parse_args()
 
     if not get_hf_token():
@@ -80,7 +86,7 @@ def main():
     llm = resolve_llm(cfg, args.llm_profile)
     dataset = args.dataset or cfg["datasets"]["name"]
     limit = args.limit or cfg["datasets"]["limit"]
-    r = cfg["prod_m"]["num_samples"]
+    r = args.num_samples or cfg["prod_m"]["num_samples"]
     chunk_size = max(1, args.chunk_size)
 
     print(f"LLM: {llm['profile']} -> {llm['model']}")

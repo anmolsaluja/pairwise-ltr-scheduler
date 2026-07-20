@@ -59,3 +59,24 @@ OURS vs FCFS: ...%
 ```
 
 See `docs/PROJECT_OVERVIEW.md` for the report write-up.
+
+## Live vLLM + higher prompt count (~1000)
+
+Uses a real GPU engine instead of the discrete-event simulator.
+Config: `configs/live_run.yaml` (1000 prompts, 3 samples/prompt for faster labeling).
+
+```bash
+pip install vllm   # GPU only
+
+# Full pipeline (chunked labels → train → live FCFS/LTR/PARS)
+python scripts/run_live.py \
+  --limit 1000 --chunk-size 50 --num-samples 3 --device cuda \
+  --backup-dir /content/drive/MyDrive/capstone_results
+
+# Or live eval only (after labels + checkpoints exist)
+python scripts/evaluate_live.py --config configs/live_run.yaml --limit 1000 --device cuda
+```
+
+Results print to the terminal and save to `data/processed/live_eval_results.json`.
+
+**Note:** Labeling 1000 prompts is multi-session work on a T4 (use `--resume` + Drive backup). Live eval itself needs enough GPU RAM for vLLM (T4 + Llama-3.2-3B is the intended Colab path).
