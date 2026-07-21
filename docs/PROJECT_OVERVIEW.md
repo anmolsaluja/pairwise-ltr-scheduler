@@ -23,17 +23,17 @@ Prompts
 Main paper: LTR beats FCFS.  
 We improve it with median supervision (ProD-M) + pairwise ranking (PARS) + priority.
 
-## Live engine (optional, high prompt count)
+## Live engine (optional, 1000 prompts)
 
-Simulator (`scripts/evaluate.py`) is the default report path.
-
-For a **real** GPU serving comparison on ~1000 prompts:
+Simulator (`scripts/evaluate.py`) is the default report path at **1000 prompts**.
 
 ```bash
 python scripts/run_live.py --limit 1000 --chunk-size 50 --num-samples 3 --device cuda
-# or after labels/checkpoints already exist:
-python scripts/evaluate_live.py --config configs/live_run.yaml --limit 1000 --device cuda
+# HuggingFace live (Colab-friendly):
+python scripts/evaluate_live_hf.py --config configs/live_run.yaml --limit 1000 --device cuda
+# Report graphs:
+python scripts/plot_results.py --config configs/live_run.yaml --limit 1000 --device cuda \
+  --out-dir /content/drive/MyDrive/capstone_results/figures
 ```
 
-vLLM uses `scheduling_policy=priority`; PARS scores (+ high/normal/low boosts)
-become integer priorities (lower = sooner).
+vLLM uses `scheduling_policy=priority` when available; otherwise use the HF live path.

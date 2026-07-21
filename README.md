@@ -14,9 +14,10 @@
 - **PARS**: pairwise BERT ranker.  
 - **Priority**: high / normal / low + starvation prevention.
 
-## Run (Colab GPU) — 4 checkpoints of 25 prompts
+## Primary run scale: **1000 prompts**
 
-Labeling is the slow part. We save every **25 prompts** and copy to Drive.
+Config: `configs/live_run.yaml` (1000 prompts, chunk size 50, 3 samples/prompt).  
+Use Colab Pro / A100 when possible. Labels resume from Drive after disconnects.
 
 ```python
 import os
@@ -24,27 +25,36 @@ from google.colab import drive
 os.environ["HF_TOKEN"] = "hf_YOUR_TOKEN"
 drive.mount("/content/drive")
 
-!git clone https://github.com/anmolsaluja/pairwise-ltr-scheduler.git
+!git clone -b anmolsaluja/live-vllm-high-prompt-eval https://github.com/anmolsaluja/pairwise-ltr-scheduler.git
 %cd pairwise-ltr-scheduler
 !pip install -q -r requirements.txt
 !python scripts/check_setup.py
 
-# Chunk 1-4: safe to re-run if disconnected (--resume)
-!python scripts/generate_labels.py \
-  --limit 100 --chunk-size 25 --resume --device cuda \
+# 1000 prompts in chunks of 50 (--resume safe)
+!python scripts/generate_labels.py --config configs/live_run.yaml \
+  --limit 1000 --chunk-size 50 --num-samples 3 --resume --device cuda \
   --backup-dir /content/drive/MyDrive/capstone_results
 
-# After 100 labels exist:
-!python scripts/train_prod_m.py --target single --output checkpoints/ltr_pointwise.pt --device cuda
-!python scripts/train_ranker.py --train-samples 100 --device cuda
-!python scripts/evaluate.py --limit 100 --device cuda
+!python scripts/train_prod_m.py --config configs/live_run.yaml \
+  --target single --output checkpoints/ltr_pointwise.pt --device cuda
+!python scripts/train_ranker.py --config configs/live_run.yaml \
+  --train-samples 1000 --device cuda
+!python scripts/evaluate.py --config configs/live_run.yaml --limit 1000 --device cuda
+
+# Report graphs (paper Fig. 2 / Fig. 3 style)
+!python scripts/plot_results.py --config configs/live_run.yaml --limit 1000 --device cuda \
+  --out-dir /content/drive/MyDrive/capstone_results/figures
 ```
 
-Or use `notebooks/colab_run.ipynb`.
+Or use `notebooks/colab_run.ipynb` / `python scripts/run_live.py --limit 1000 ...`.
 
 Accept license: https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct  
 
-**Time (T4):** ~30–60 min per 25-prompt chunk × 4, then ~1 hr train/eval.
+**Time (A100):** labeling is still the long step (multi-session OK with `--resume`); train/eval/plots are much faster.
+
+### Optional quick smoke test (100 prompts)
+
+`configs/default.yaml` still supports a small 100-prompt demo (`--limit 100 --chunk-size 25`) if you only need a pipeline check.
 
 ## Final printed result looks like
 
@@ -60,34 +70,15 @@ OURS vs FCFS: ...%
 
 See `docs/PROJECT_OVERVIEW.md` for the report write-up.
 
-## Live vLLM + higher prompt count (~1000)
-
-Uses a real GPU engine instead of the discrete-event simulator.
-Config: `configs/live_run.yaml` (1000 prompts, 3 samples/prompt for faster labeling).
+## Live GPU serving (optional)
 
 ```bash
-pip install vllm   # GPU only
+# HuggingFace live path (recommended on Colab if vLLM import fails)
+python scripts/evaluate_live_hf.py --config configs/live_run.yaml --limit 1000 --device cuda
 
-# Full pipeline (chunked labels → train → live FCFS/LTR/PARS)
-python scripts/run_live.py \
-  --limit 1000 --chunk-size 50 --num-samples 3 --device cuda \
-  --backup-dir /content/drive/MyDrive/capstone_results
-
-# Or live eval only (after labels + checkpoints exist)
+# vLLM path (when install works)
+pip install vllm
 python scripts/evaluate_live.py --config configs/live_run.yaml --limit 1000 --device cuda
 ```
 
-Results print to the terminal and save to `data/processed/live_eval_results.json`.
-
-**Note:** Labeling 1000 prompts is multi-session work on a T4 (use `--resume` + Drive backup). Live eval itself needs enough GPU RAM for vLLM (T4 + Llama-3.2-3B is the intended Colab path). Prefer `scripts/evaluate_live_hf.py` on Colab if vLLM import fails.
-
-## Report graphs (Results section)
-
-After labels + checkpoints exist:
-
-```bash
-python scripts/plot_results.py --config configs/live_run.yaml --limit 100 --device cuda \
-  --out-dir /content/drive/MyDrive/capstone_results/figures
-```
-
-Writes paper-style PNGs (length distributions, latency vs request rate, FCFS/LTR/OURS bars) plus `results_section.md` for the report.
+Results save to `data/processed/live_eval_results.json` and figures under Drive `capstone_results/figures/`.
