@@ -13,6 +13,7 @@ Compare exactly three schedulers (proposal evaluation plan):
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -165,6 +166,39 @@ def main():
     show("LTR vs FCFS", "fcfs", "ltr")
     show("OURS vs LTR (main paper)", "ltr", "pars")
     show("OURS vs FCFS", "fcfs", "pars")
+
+    # Save machine-readable summary for plot_results / report
+    out_json = "data/processed/eval_summary.json"
+    os.makedirs(os.path.dirname(out_json), exist_ok=True)
+    payload = {
+        "summaries": {
+            s.policy: {
+                "avg_latency": s.avg_latency,
+                "p50_latency": s.p50_latency,
+                "p95_latency": s.p95_latency,
+                "p99_latency": s.p99_latency,
+                "avg_wait": s.avg_wait,
+                "avg_ttft": s.avg_ttft,
+                "throughput_rps": s.throughput_rps,
+                "num_requests": s.num_requests,
+            }
+            for s in summaries
+        },
+        "p95_improvements_pct": {},
+    }
+    for label, a, b in (
+        ("LTR vs FCFS", "fcfs", "ltr"),
+        ("OURS vs LTR (main paper)", "ltr", "pars"),
+        ("OURS vs FCFS", "fcfs", "pars"),
+    ):
+        if a in by_name and b in by_name:
+            g = _pct_gain(by_name[a].p95_latency, by_name[b].p95_latency)
+            if g is not None:
+                payload["p95_improvements_pct"][label] = g
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    print(f"\nSaved {out_json}")
+    print("For report graphs: python scripts/plot_results.py --device cuda")
 
 
 if __name__ == "__main__":

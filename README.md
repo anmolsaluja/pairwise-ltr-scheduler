@@ -79,4 +79,15 @@ python scripts/evaluate_live.py --config configs/live_run.yaml --limit 1000 --de
 
 Results print to the terminal and save to `data/processed/live_eval_results.json`.
 
-**Note:** Labeling 1000 prompts is multi-session work on a T4 (use `--resume` + Drive backup). Live eval itself needs enough GPU RAM for vLLM (T4 + Llama-3.2-3B is the intended Colab path).
+**Note:** Labeling 1000 prompts is multi-session work on a T4 (use `--resume` + Drive backup). Live eval itself needs enough GPU RAM for vLLM (T4 + Llama-3.2-3B is the intended Colab path). Prefer `scripts/evaluate_live_hf.py` on Colab if vLLM import fails.
+
+## Report graphs (Results section)
+
+After labels + checkpoints exist:
+
+```bash
+python scripts/plot_results.py --config configs/live_run.yaml --limit 100 --device cuda \
+  --out-dir /content/drive/MyDrive/capstone_results/figures
+```
+
+Writes paper-style PNGs (length distributions, latency vs request rate, FCFS/LTR/OURS bars) plus `results_section.md` for the report.
