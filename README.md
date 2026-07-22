@@ -1,6 +1,6 @@
 # Improving LTR with PARS + ProD-M + Priority
 
-**FDU Vancouver Capstone (CS Master's)**
+**FDU Vancouver Capstone **
 
 ## Three-way comparison only
 
