@@ -33,7 +33,7 @@ from src.prod_m import (
     length_to_bin,
     load_hidden,
     make_bins,
-    save_prod_m,
+    save_prod_m
 )
 from src.utils import load_config, resolve_llm
 
