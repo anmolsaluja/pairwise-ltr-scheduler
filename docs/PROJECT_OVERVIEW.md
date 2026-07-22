@@ -10,7 +10,7 @@ ProD-M is **not** in the main paper. In our method it means: generate **median-o
 
 ## Experiment scale
 
-**Primary run: 1000 prompts** (`configs/live_run.yaml` / `configs/default.yaml`).  
+**Primary run: 1000 prompts** (`configs/live_run.yaml`).  
 Labeling uses chunk size **50** and **3** samples per prompt (`--resume` + Drive backup).
 
 ## Pipeline

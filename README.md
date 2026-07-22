@@ -1,83 +1,22 @@
-Improving LTR with PARS + ProD-M + Priority
+# Improving LTR with PARS + ProD-M + Priority
 
-FDU Vancouver Capstone
+**FDU Vancouver Capstone**
 
-Three-way comparison
+## Three-way comparison
 
+| # | Method | Whose? |
+|---|--------|--------|
+| 1 | **FCFS** | Baseline |
+| 2 | **LTR scheduler** | Main paper (pointwise, single-sample labels) |
+| 3 | **PARS + ProD-M + Priority** | **Ours** |
 
+- **ProD-M** (not in the main paper): sample Llama `r` times, take the **median** length as the label for training our ranker.
+- **PARS**: pairwise BERT ranker.
+- **Priority**: high / normal / low + starvation prevention.
 
+## Repository structure
 
-
-
-
-#
-
-
-
-Method
-
-
-
-Whose?
-
-
-
-
-
-1
-
-
-
-FCFS
-
-
-
-Baseline
-
-
-
-
-
-2
-
-
-
-LTR scheduler
-
-
-
-Main paper (pointwise, single-sample labels)
-
-
-
-
-
-3
-
-
-
-PARS + ProD-M + Priority
-
-
-
-Ours
-
-
-
-
-
-ProD-M (not in the main paper): sample Llama r times, take the median length as the label for training our ranker.
-
-
-
-PARS: pairwise BERT ranker.
-
-
-
-Priority: high / normal / low + starvation prevention.
-
-Repository structure
-
+```
 configs/
   live_run.yaml          # single config for the primary 1000-prompt run
 src/
@@ -113,14 +52,14 @@ cloud/
   run_on_cloud.sh        # one-shot pipeline for Colab / RunPod GPUs
 docs/
   PROJECT_OVERVIEW.md    # report write-up notes
+```
 
+## Primary run scale: **1000 prompts**
 
-
-Primary run scale: 1000 prompts
-
-Config: configs/live_run.yaml (1000 prompts, chunk size 50, 3 samples/prompt).
+Config: `configs/live_run.yaml` (1000 prompts, chunk size 50, 3 samples/prompt).
 Use Colab Pro / A100 when possible. Labels resume from Drive after disconnects.
 
+```python
 import os
 from google.colab import drive
 os.environ["HF_TOKEN"] = "hf_YOUR_TOKEN"
@@ -145,15 +84,17 @@ drive.mount("/content/drive")
 # Report graphs (paper Fig. 2 / Fig. 3 style)
 !python scripts/plot_results.py --config configs/live_run.yaml --limit 1000 --device cuda \
   --out-dir /content/drive/MyDrive/capstone_results/figures
+```
 
-Or use notebooks/colab_run.ipynb / python scripts/run_live.py --limit 1000 ....
+Or use `notebooks/colab_run.ipynb` / `python scripts/run_live.py --limit 1000 ...`.
 
 Accept the model license first: https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct
 
-Time (A100): labeling is the long step (multi-session OK with --resume); train/eval/plots are much faster.
+**Time (A100):** labeling is the long step (multi-session OK with `--resume`); train/eval/plots are much faster.
 
-Final printed result looks like
+## Final printed result looks like
 
+```text
 === FCFS (baseline) ===
 === LTR scheduler (MAIN PAPER) ===
 === PARS + ProD-M + Priority (OURS) ===
@@ -161,22 +102,26 @@ Final printed result looks like
 LTR vs FCFS: ...%
 OURS vs LTR (main paper): ...%
 OURS vs FCFS: ...%
+```
 
-See docs/PROJECT_OVERVIEW.md for the report write-up.
+See `docs/PROJECT_OVERVIEW.md` for the report write-up.
 
-Live GPU serving (optional)
+## Live GPU serving (optional)
 
+```bash
 # HuggingFace live path (recommended on Colab if vLLM import fails)
 python scripts/evaluate_live_hf.py --config configs/live_run.yaml --limit 1000 --device cuda
 
 # vLLM path (when install works)
 python scripts/ensure_vllm.py --install
 python scripts/evaluate_live.py --config configs/live_run.yaml --limit 1000 --device cuda
+```
 
-Results save to data/processed/live_eval_results.json and figures under Drive capstone_results/figures/.
+Results save to `data/processed/live_eval_results.json` and figures under Drive `capstone_results/figures/`.
 
-Extra experiments (report appendix)
+## Extra experiments (report appendix)
 
+```bash
 # Median-of-r vs single-sample labels — shows the gain comes from the supervision target
 python scripts/ablation_labels.py --config configs/live_run.yaml --device cuda
 
@@ -185,11 +130,11 @@ python scripts/eval_ood.py --device cuda
 
 # Quick CPU sanity check of FCFS vs SJF (no GPU, no token)
 python scripts/demo_cpu.py
+```
 
+## Quick start (no GPU)
 
-
-Quick start (no GPU)
-
+```bash
 pip install -r requirements.txt   # install torch separately first
 python scripts/demo_cpu.py
-
+```
