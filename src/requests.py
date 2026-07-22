@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-
+#stores all scheduling- related informationfor an inference request
 @dataclass
 class Request:
     request_id: str
@@ -15,12 +15,12 @@ class Request:
     rank_score: float = 0.0        # higher => expected longer job
     predicted_length: int = 0
 
-    def effective_score(self, boosts):
+    def effective_score(self, priority_boosts):
         """
         Lower score gets served first.
         High priority subtracts from the score so urgent jobs jump ahead.
         """
-        return self.rank_score + boosts.get(self.priority, 0.0)
+        return self.rank_score + priority_boosts.get(self.priority, 0.0)
 
 
 def parse_priority(value):
