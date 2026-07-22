@@ -175,7 +175,7 @@ def main():
     )
 
     texts = [r.text for r in records]
-    biz_pri = parse_priorities_from_records(records)
+    priority_labels = parse_priorities_from_records(records)
     boosts = {
         "high": cfg["priority"]["high_boost"],
         "normal": cfg["priority"]["normal_boost"],
@@ -207,11 +207,11 @@ def main():
         orders["fcfs"] = list(range(len(texts)))
     if "ltr" in want and ltr_scores is not None:
         orders["ltr"] = _order_from_scores(
-            effective_scores(ltr_scores, biz_pri, boosts, use_priority=False)
+            effective_scores(ltr_scores, priority_labels, boosts, use_priority=False)
         )
     if "pars" in want and pars_scores is not None:
         orders["pars"] = _order_from_scores(
-            effective_scores(pars_scores, biz_pri, boosts, use_priority=True)
+            effective_scores(pars_scores, priority_labels, boosts, use_priority=True)
         )
 
     model_name = meta.get("llm") or llm_cfg["model"]
