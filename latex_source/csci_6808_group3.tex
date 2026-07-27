@@ -1,0 +1,451 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usepackage{url}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric}
+\usetikzlibrary{calc,fit,backgrounds}
+
+\begin{document}
+
+\title{Group 3: Improving LLM Inference through Pairwise Ranking Scheduler and Median-Based Length Predictor}
+
+\author{
+\IEEEauthorblockN{Mohammed Sirajuddin, Anmol Saluja, Chandra Venigalla, Daisy Clavijo, Sravan Bhamidipati}
+\IEEEauthorblockA{
+Fairleigh Dickinson University, Vancouver, Canada
+}
+}
+
+\maketitle
+
+\begin{abstract}
+Large Language Models (LLMs) have already reached a state where they can be considered part of any Artificial Intelligence (AI) system that works with natural language. Besides enabling text generation, question answering, and conversational systems, LLMs have been the driving force for the development of many new applications and services. The increasing popularity of LLMs means that they have become a bottleneck in several ways, not the least of which is related to latency and utilization when dealing with multiple requests simultaneously. One of the problems is that there is little or no attention paid to the characteristics of each request when the scheduling occurs.
+
+As a matter of fact, the use of output length prediction can also have a major impact on the quality of scheduling decisions as these predictors have shown a tendency to be greatly affected by outlying examples even though they are supposed to capture typical behaviors only. Therefore, to alleviate both issues, we propose in this study a novel scheduling framework which is shown to significantly improve both dimensions of the problem, that is, request prioritization and output length prediction. The hybrid framework introduced here utilizes a scheduler of pairwise ranking with the estimator of output length based on the medians in order to make the execution of inference of requests as fast as possible and at the same time provide the users with a reliable output length prediction. The pairwise ranking model is trained to understand and rank the relative importance between pairs of requests whereas the median-based predictor, by filtering out outliers, becomes a powerful reliable prediction technique. The experimental results show that the proposed approach can achieve a substantial reduction in average inference latency of approximately 42.9\% compared to FCFS, and 5.8\% compared to a pointwise learning-to-rank baseline, with nearly the same throughput to serve 1,000 prompts from Llama-3.2-3B-Instruct. The results show that combining the two methods of pairwise ranking and median-based prediction can be a viable approach for achieving better performance in a real world deployment scenario with Large Language Model inference.
+\end{abstract}
+
+\clearpage
+\section{Introduction}
+Nowadays, large language models form the backend for chatbots, code generators, and retrieval-augmented applications that must answer tens of thousands of questions with the same fast response time each question gets on the first try. However, since decoding is done one-by-one, the time it takes to execute a query is determined mostly by the number of tokens in response, and different types of query will have different output lengths by multiple digits: a factual question might be answered in just a couple of dozen tokens but a competition-mathematics problem or code-generating task might take up hundreds or even thousands of tokens \cite{fu2024efficient,tao2025pars}. Nonetheless, such production-grade serving backends as vLLM \cite{kwon2023pagedattention}, Orca \cite{yu2022orca}, and the others, almost all rely by default on queue order (FCFS) to schedule the request processing. Thus, a single very long request being first in the queue will be a bottleneck for all the other users' requests. This head-of-line (HOL) blocking is not only the root of average latency but tail latency that increases to the level which is completely unacceptable when systems are most busy \cite{fu2024efficient}.
+
+Traditional scheduling theory recommends shortest-job-first (SJF) to cut down on average waiting time; however, SJF needs job lengths which are not predictable until the whole job generation has been done. As a consequence, a large amount of literature has come up on pre-estimation of output lengths by, for instance, encouraging the LLM that it has to generate a response of such a length \cite{zheng2023response}, by using separate models which, given a prompt, return estimates or predicted lengths \cite{jin2023s3,qiu2024ssjf}, and also by getting internal representations of the served model \cite{shahout2025trail,xie2026egtp}. There are, however, two major issues with all of the above methods. First, most of them consider output length to be a fixed number while the lengths of the generations of the same prompt with the same decoding setup follow a very skewed/heavy-tailed distribution. One-shot label sampling causes a great deal of noise to the training process \cite{wang2026prodm}. Secondly, in reality a scheduler does not require precise length information it requires, rather, the correct ordering of requests and if that is not satisfied then a scheduler will be misled. A regression approach with a regression loss function minimizes the sum of squares of the errors between the predicted and true label values for individual labels, i.e. one by one or point by point. Listwise ranking which uses the entire list to evaluate loss and optimize ranking, is more effective than regression as demonstrated empirically with a dataset \cite{fu2024efficient}. Pairwise ranking by using margin loss and eliminating closely paired near-tie pairs has been shown to emphasize on the comparisons that matter most for scheduling \cite{tao2025pars}.
+
+The work comes as a graduate capstone for CSCI 6806, and is the implementation and evaluation of a scheduler that integrates both remedies. As in ProD-M \cite{wang2026prodm} which adopted the robust-supervision view, we sample the served model r=3 times per prompt and train it with the median length of output as the training label, which is the point target under the mean absolute error criterion, and is less sensitive to occasional very long generations compared to a single one. After PARS \cite{tao2025pars} we fine-tune a BERT-based pairwise ranker using margin ranking loss on the pairs labelled with the median, discarding pairs that fall within the natural sampling variability of the model. The scores are fed into an SJF-style scheduler that has three priority classes and a starvation prevention rule, and we compare it against FCFS and against a pointwise learning-to-rank (LTR) baseline of the main reference paper \cite{fu2024efficient} using a mixture of math, coding, chat, and long-context prompts served by Llama-3.2-3B-Instruct \cite{dubey2024llama3}.
+
+A ranker trained with noisy and single-sample labels can still get two prompts right if the noise is cancelled out, but this is of course not guaranteed and the errors will add up if a sampled length is very different from the length that is typically generated by a particular prompt. On the other hand, a strong median label is only useful to a scheduler if it is consumed with an objective that is actually of the sort that scheduling cares about, which is the relative ordering of requests, not an absolute length value. This work connects both contributions by training the pairwise ranker directly on the median-based labels, and by removing prompt pairs with length differences of the prompt's label that happen to fall within the model's sampling variance, to the detriment of increased offline computation required to produce the multiple samples per prompt that are needed to label.
+
+This work has the following contributions:
+
+•	an end-to-end pipeline to generate robust median-supervised length labels from a live LLM, train a pointwise LTR baseline and a pairwise PARS-style ranker, and test three scheduling policies under the same conditions;
+
+•	an empirical comparison on 1,000 mixed-domain prompts, showing 42.9\% and 5.8\% less average latency than FCFS and the pointwise LTR baseline, respectively, at equal throughput;
+
+•   a held-out generalization study (100 prompts not seen during training) reporting a ranking quality of Kendall's Tau 0.521 and pairwise accuracy of 0.761; and
+
+•  an honest characterization of the p95-versus-mean trade-off of SJF-style policies, together with an analysis of how priority boosting and starvation control bound this trade-off.
+
+The rest of this report is structured in the following manner. Section II gives the technical background: the two-phase inference pipeline, the statistics of prompt-conditioned output length, learning-to-rank formulations, and our system design.
+
+Section III reviews related work in groupings according to approach family.
+
+Section IV details methodology, platform, and hyperparameters required for reproducing every result. Section V reports on the evaluation of predictor quality, training dynamics, scheduler comparison, held-out generalisation, load sensitivity, and cost.
+
+Section VI covers the main insights and also the limitations, and finally, Section VII gives a rundown of what has been presented.
+
+\clearpage
+\section{Background}
+This segment presents the technical basics needed to understand the design of the system: the dual-phase process of LLM inference and the point where HOL blocking happens, the information related to the output length dependent on the given prompt, the learning-to-rank methods and the design of the system.
+
+\subsection{Process of LLM Serving Pipeline and HOL Blocking LLM inference}\label{AA}
+ In the first stage, the whole prompt is processed at once, which fills the key-value (KV) cache; this stage is compute-bound. The second stage is the token generation process, during which each token is generated one at a time based on the data already stored in the cache; this stage is memory-bound, and its duration is directly proportional to the number of tokens produced. Because producing a token at each step requires reading the data stored in the KV cache, an increase in token length brings a proportional increase in the amount of memory used, so completing a request depends on memory pressure as much as on raw compute.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  node distance=5mm,
+  font=\tiny,
+  xshift=-2mm,
+  box/.style={
+    rectangle,
+    draw,
+    rounded corners,
+    minimum height=6mm,
+    minimum width=13mm,
+    align=center,
+    inner sep=1.5pt
+  },
+  arr/.style={
+    -{Latex[length=1.4mm]}
+  }
+]
+\node[box] (clients) {Clients};
+\node[
+  box,
+  right=of clients,
+  minimum width=15mm
+] (queue)
+{Waiting\\queue};
+\node[
+  box,
+  right=of queue,
+  minimum width=18mm
+] (sched)
+{Scheduler\\(FCFS $\rightarrow$ Rank)};
+\node[
+  box,
+  right=of sched,
+  minimum width=20mm
+] (engine)
+{Batched engine\\prefill / decode};
+\node[
+  box,
+  below=5mm of engine,
+  minimum width=18mm
+] (kv)
+{Paged KV cache};
+\draw[arr] (clients) -- (queue);
+\draw[arr] (queue) -- (sched);
+\draw[arr]
+  (sched) --
+  node[above, font=\tiny] {admit}
+  (engine);
+\draw[
+  {Latex[length=1.2mm]}-{Latex[length=1.2mm]}
+]
+  (engine) -- (kv);
+\node[
+  font=\tiny\itshape,
+  below=3mm of $(clients)!0.5!(queue)$,
+  align=center
+]
+{HOL blocking arises here};
+\draw[arr]
+  (engine.north)
+  -- ++(0,6mm)
+  -| node[
+      above,
+      pos=0.55,
+      font=\tiny\itshape
+     ] {responses}
+  (clients.north);
+\end{tikzpicture}
+\caption{
+The LLM serving stack. Requests wait in a queue until the
+scheduler admits them to the continuously batched engine.
+Under FCFS, a long-running request at the head of the queue
+delays the requests behind it. Our approach replaces the
+FCFS policy with rank-based scheduling.
+}
+\label{fig:llm-serving-stack}
+\end{figure}
+
+ Two innovations define the modern serving stack. The first is Orca's continuous batching, which does not wait for the current batch to finish before starting the next one. Instead of moving through fixed batches, the engine works at the iteration level, ejecting a sequence the moment it emits an "end of sequence" signal and admitting a new request into the freed slot, which removes the idle "bubbles" that static batching creates when short and long requests share a batch. The second innovation belongs to vLLM and is called PagedAttention, which manages the KV cache in fixed-size blocks, the same idea used in virtual memory; this avoids the worst-case scenarios of earlier engines, which had to reserve enough cache for a request's maximum possible output. Both techniques increase engine throughput, but neither one changes which request gets processed next: that decision still belongs to the scheduler, and under the standard method (FCFS) the engine simply processes requests in arrival order. As a result, short requests stay in the queue waiting until whatever long request arrived before them has been fully served.
+
+\subsection{Scheduling Theory: FCFS, SJF, and Starvations}
+
+Shortest-job-first (SJF) is proven to be an effective strategy when there is a single server with defined service times. If two jobs of duration a and b are exchanged, such that a is completed first and then b is attended to, this brings down the overall completion time of the jobs processed. Therefore, SJF is effective in minimizing waiting time in a very effective manner. Also, the mean waiting time incurred by the shorter jobs is borne by the long jobs due to being hounded severely. In an open system, the long jobs can be delayed indefinitely. In the practical scenarios, SJF queue is modified in terms of aging to avoid starvation of jobs. In our SJF queue, all wait times of the jobs are recorded, and any job whose wait limit exceeds some allowable limit is allowed to take up the service before others waiting shorter than this limit.
+
+\subsection{Output Length as a Prompt-Conditioned Distribution}
+If you sample with temp, you will not get a uniform length when you repeat your sampling. Rather, you will receive various lengths with a distribution according to the prompt. It is often long-tailed and can contain lengths that are 2-4 times longer than the median for math, coding and long text tasks.
+
+This results in two primary impacts: first, a single sample is not a good indicator of length, since a surprisingly long output may make a prompt that normally gives short text appear much longer than it typically is. Second, if the goal is to minimize the average absolute error, the best prediction is the median length. This is why it is better to build labels by taking the median length across several independent generations: the more generations used, the less likely the calculated median is to differ from the true median, so the noise in the labels drops significantly even with just 3 generations, compared to using only one.
+
+It's also useful for training schedules. When length distributions for two prompts have a significant overlap, it is difficult to conclude the length of one should be greater than the other. It can't learn this distinction, and if you try to force it, you teach it noise. The PARS method deals with this by not utilizing training pairs that have too short a difference in length. This threshold is determined by the typical length variations of the model samples, for example, with Llama, a typical variation is 20\% at standard settings. The same threshold 20\% is applied for filtering based on median labels.
+
+\subsection{Learning to Rank for Scheduling}
+There are three main kinds of learning-to-rank (LTR) methods. Pointwise methods perform a separate regression or classification of each item's ordering score. When applied in scheduling, this means that they predict the ordering scores of any scheduling requests made \cite{jin2023s3,qiu2024ssjf}.
+
+Listwise methods optimize the ordering of the entire scheduling list, whereas
+the pairwise ranking scheme described in this paper performs comparisons
+between prompts $A$ and $B$. The model produces corresponding scores $s_A$
+and $s_B$ and uses a label $y \in \{1,-1\}$ to indicate the preferred order.
+The margin-ranking loss is defined as
+$L=\max(0,-y(s_A-s_B)+m)$, where $m$ is the margin.
+
+Since the scheduling process does not utilize any additional information provided, the pairwise training brings the desired objective closer to the decision made, and excluding the pairs whose relative length difference falls in the interval defined by the model’s sampling noise helps to avoid meaningless and contradicting comparisons \cite{tao2025pars}. We measure the quality of sorting by means of Kendall’s Tau \cite{kendall1938}.
+
+\begin{equation}
+\tau_b=\frac{n_c-n_d}
+{\sqrt{(n_0-n_1)(n_0-n_2)}}
+\end{equation}
+
+Here, $n_c$ and $n_d$ are the numbers of concordant and discordant pairs,
+respectively, calculated from the total number of pairs
+$n_0 = n(n-1)/2$, while $n_1$ and $n_2$ represent the numbers of ties.
+A value of $\tau_b = 1$ indicates complete agreement with the true length
+ordering, whereas $\tau_b = 0$ indicates random ordering.
+
+\begin{figure}[!t]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=8mm and 10mm,
+    box/.style={draw, thick, minimum height=1cm, align=center, font=\small, inner sep=4pt},
+    arrow/.style={-{Latex[length=2mm]}, thick},
+    dashedarrow/.style={-{Latex[length=2mm]}, thick, dashed},
+]
+\node[box, minimum width=2.2cm] (prompt) {Prompt\\corpus};
+\node[box, minimum width=3.2cm, right=of prompt] (llama) {Llama-3.2-3B\\$\times\, r=3$ samples};
+\node[box, minimum width=2.2cm, right=of llama] (median) {Median labels};
+\node[box, minimum width=3.4cm, right=1.6cm of median] (bert) {BERT pairwise\\ranker (PARS)};
+\node[box, minimum width=3.4cm, below=8mm of bert] (prodm) {ProD-M MLP\\(hidden states)};
+\node[box, minimum width=2.4cm, below=32mm of prompt] (queue) {Waiting\\queue};
+\node[box, minimum width=2.2cm, right=of queue] (ranker) {Ranker\\score};
+\node[box, minimum width=2.6cm, right=of ranker] (priority) {Priority +\\starvation};
+\node[box, minimum width=3.6cm, right=of priority] (engine) {Execution engine\\(SJF order)};
+
+\draw[arrow] (prompt) -- (llama);
+\draw[arrow] (llama) -- (median);
+\draw[arrow] (median) -- (bert) node[midway, above, font=\scriptsize] {pairs};
+\draw[arrow] (llama.south) .. controls +(0,-1.2) and +(-2.5,0.8) .. (prodm.west);
+\draw[arrow] (median.south) .. controls +(0,-0.8) and +(0,0.8) .. (prodm.north);
+\draw[arrow] (queue) -- (ranker);
+\draw[arrow] (ranker) -- (priority);
+\draw[arrow] (priority) -- (engine) node[midway, above, font=\scriptsize] {admit};
+\draw[dashedarrow] (bert.south) .. controls +(-1,-2.5) and +(3,2.5) .. (ranker.north)
+    node[pos=0.45, right, font=\scriptsize] {deploy};
+\node[font=\scriptsize\itshape] at ($(priority.north)+(0,0.6)$) {hidden states};
+\begin{scope}[on background layer]
+\node[draw, dashed, thick, inner sep=10pt,
+      fit=(prompt)(llama)(median)(bert)(prodm), label={[font=\small\itshape]above:offline training}] (offlinebox) {};
+\node[draw, dashed, thick, inner sep=10pt,
+      fit=(queue)(ranker)(priority)(engine), label={[font=\small\itshape]below:online serving}] (onlinebox) {};
+\end{scope}
+\end{tikzpicture}
+}
+\caption{System architecture. Offline (top): the served LLM is sampled $r=3$ times per prompt; median labels supervise both the ProD-M MLP over the model's own hidden states and the BERT pairwise ranker. Online (bottom): waiting requests are scored, adjusted by priority and starvation rules, and admitted shortest-first.}
+\label{fig:architecture}
+\end{figure}
+
+Additionally, we report pairwise accuracy and NDCG, which assigns greater
+importance to items appearing near the beginning of the ranking, where the longest queries are placed. Prompt-based predictors embed each prompt using a small pretrained encoder, such as BERT's \texttt{[CLS]} vector~\cite{devlin2019bert}, while hidden-state predictors reuse the served model's own activations, typically the last-layer hidden state of the final prompt token, computed for free during prefill. Our system uses both: hidden states feed the ProD-M length predictor,
+and BERT embeddings feed the pairwise ranker, so scoring a waiting request never
+requires a generation pass from the served model.
+
+\subsection{System Architecture}
+As shown in Fig.~\ref{fig:architecture}, the system has two planes. The offline plane samples the served LLM $r$ times per prompt, computes median labels, extracts the last-layer hidden state of the final prompt token, and trains two predictors: a two-layer MLP classifier over hidden states that sorts the median length into bins (ProD-M~\cite{wang2026prodm}), and a BERT-base~\cite{devlin2019bert} pairwise ranker trained on filtered median-labeled pairs (PARS~\cite{tao2025pars}). The online plane scores each waiting request with the ranker, adds a signed priority boost based on the request's class, and promotes any request that has already waited too long.
+These two predictors play complementary roles by design. The ProD-M head produces length estimates that are useful for capacity planning and for reproducing the pointwise baseline, while the pairwise ranker produces the ordering the scheduler actually consumes; both are trained from the same median-labeled data, so the comparison between pointwise and pairwise scheduling later on holds supervision quality fixed. Priority enters not as a separate queue but as a signed additive adjustment to the ranker's output: a high-priority request is treated as if it were shorter, and a low-priority request as if it were longer, so a single sort handles both length awareness and business priority at once. Finally, starvation prevention runs on wall-clock time rather than on predicted length: any request that has waited beyond a fixed threshold is moved to the front of the queue regardless of what the ranker predicted, which bounds the worst-case delay by construction. All of this stays cheap because the ranker itself is a small encoder, about 110 million parameters, whose forward pass costs only a few milliseconds, orders of magnitude below the cost of a single decoding step.
+
+\clearpage
+\section{Related Work}
+We divide previous research into three categories and highlight the main achievements and drawbacks of the best known systems from the last five years.
+
+\subsection{Prompt-Based Length Prediction}\label{AA}
+The earliest method estimates output length using only the input. In its Perception-in-Advance method, the LLM interpreter tries to calculate its output length. Although the length estimation is useful, it leads to extra generation time of tens of milliseconds for every application. The $S^3$ method uses a DistilBERT classifier trained on 10 length groups for KV-cache sizes and increases batch size~\cite{jin2023s3}. SSJF represents prediction using the regression or classification method in which a BERT proxy is used~\cite{qiu2024ssjf}. Moreover, Magnus improves prompt features using user context and random-forest regression~\cite{cheng2024magnus}. In addition, the TetriInfer method predicts output length to make better use of hardware for load balancing~\cite{hu2024tetriinfer}. The DynamoLLM method performs cluster configuration considering data about the estimated output length~\cite{stojkovic2024dynamollm}.
+
+\subsection{Hidden-State and Distribution-Aware Prediction}
+
+The second group of methods uses internal data representations from a model that has already been deployed. In the TRAIL method, researchers add a small classification tool to the layers of data in the middle of the model, which helps the system predict the remaining length of text more accurately while it generates output~\cite{shahout2025trail}. It is clear in the EGTP method that this approach works because it collects hidden data states from the initial input using a process based on entropy~\cite{xie2026egtp}. There are results showing that this method reaches the highest current levels of accuracy for static data with a delay of less than one millisecond. By analyzing tokens where the model has the lowest level of confidence, the system gains the clearest information about the length of the text. Because the length of text based on an initial input follows a pattern where extreme values are common and the distribution is not symmetrical, the ProD method uses a statistical approach~\cite{wang2026prodm}. To train the model, researchers create goals based on many samples of generated text. For the ProD-M version, the median value of those samples is used, while the ProD-D version groups data by specific intervals based on how many times a target length appears in large datasets, and it is demonstrated that when the number of repeated samples increases, the accuracy of the prediction improves at a very fast rate. In the ELIS method, an encoder-based tool that predicts remaining length is paired with a scheduler that prioritizes tasks that take the least amount of time~\cite{choi2025elis}. As decoding progresses, the system re-prioritizes tasks accordingly; this group of methods is effective because the extra work the model performs is hidden from the user. As an example, these scoring processes take less than one millisecond, whereas external tools take between 2 and 12 milliseconds. Due to the use of labels that account for how data is distributed, errors decrease significantly; the ProD method, for example, reaches a 25\% decrease in mean absolute error.
+
+\subsection{Ranking-Based Scheduling and Serving Systems}
+The third family predicts orderings directly. The main reference paper trains an OPT-based scorer with the listwise ListMLE loss and shows that ranking accuracy, measured by Kendall's Tau, is sufficient to approximate SJF inside vLLM at scale~\cite{fu2024efficient}. PARS replaces the listwise objective with pairwise margin ranking loss and filters near-tie training pairs whose length gap lies within sampling noise, improving Tau by large margins on reasoning models, up to 5.5$\times$ over pointwise regression on DeepSeek-R1 workloads, and generalizing across serving LLMs without retraining~\cite{tao2025pars}. The strength of ranking approaches is exactly this objective alignment; their reported limitation is sensitivity to noisy comparisons among similar-length prompts, which PARS mitigates by filtering and which we further mitigate by ranking median lengths rather than single samples. Our design therefore adopts the PARS objective but replaces its one-shot labels with ProD-M medians, combining the two lines, and to our knowledge this pairing has not been evaluated before. Orthogonal serving-system work reduces latency without length awareness: Orca introduced iteration-level continuous batching~\cite{yu2022orca}, vLLM's PagedAttention removed KV-cache fragmentation~\cite{kwon2023pagedattention}, and Sarathi-Serve's chunked prefills eliminate decode stalls behind long prompt prefills~\cite{agrawal2024sarathi}. These techniques compose with, rather than compete against, learned scheduling, since they govern how admitted work executes while the scheduler governs what is admitted. Finally, the rise of reasoning models such as DeepSeek-R1~\cite{guo2025deepseekr1}, whose chain-of-thought traces stretch outputs to thousands of tokens on hard inputs, amplifies length variance and therefore the value of every technique in this section.
+
+Synthesizing across the three families, the literature shows a clear progression: from what to predict (absolute length, then length distributions), to what representation to predict it from (prompt text, then the served model's own activations), to what objective to predict it for (calibrated estimates, then the ordering the scheduler consumes). Each axis has been advanced by a different line of work, ProD on the label, TRAIL and EGTP on the representation, LTR and PARS on the objective, but the axes have largely been studied in isolation. The gap this capstone targets is their intersection: to our knowledge no prior system trains a pairwise scheduling ranker on robust median labels, and Section~V quantifies what that combination buys on a workload deliberately mixed across all the domains these papers evaluate separately.
+
+\clearpage
+\section{Methodology}
+In this section we outline the models, data and experimental platform in detail sufficient to allow the reproduction of our results, the complete implementation is in our public repository.
+
+\subsection{Pipeline}
+There are four phases of the pipeline. Label generation: 1,000 prompts are sampled equally from GSM8K~\cite{cobbe2021gsm8k}, MATH~\cite{hendrycks2021math}, LiveCodeBench~\cite{jain2025livecodebench}, WildChat-1M~\cite{zhao2024wildchat}, and LongBench-v2~\cite{bai2025longbench}, which are deliberately spread across both short- and long-output domains. Each prompt is generated $r=3$ times by Llama-3.2-3B-Instruct~\cite{dubey2024llama3} in NF4 4-bit quantization~\cite{dettmers2023qlora} with temperature 0.7 and top-$p$ 0.9; the median token count becomes the label, the first sample is retained as a one-shot label for the baseline, and the last-layer hidden state of the final prompt token (3,072-d) is stored. Labeling runs in resumable 50-prompt chunks, with checkpoints mirrored to persistent storage. Baseline predictor: a two-layer MLP over the hidden states is trained on the one-shot labels and reproduces the pointwise LTR formulation of the main paper~\cite{fu2024efficient}. Pairwise ranker: 50,000 prompt pairs whose median lengths differ by at least 20\% (relative) are sampled; BERT-base with a linear head is trained using the margin ranking loss ($m=1.0$), following PARS~\cite{tao2025pars}. Scheduling evaluation: the results show the performance of our PARS+ProD-M+priority scheduler compared with FCFS and the pointwise LTR scheduler, under Poisson arrivals at 8\,req/s with a batch capacity of 8; the priority mix assigns roughly 12.5\% of requests high and 17.5\% low priority via signed score boosts, and any request waiting beyond 120\,s is promoted. Held-out evaluation regenerates 100 fresh prompts, programmatically verified to have zero overlap with the training set.
+
+
+\subsection{ Simulator,Metrics,and Reproduction}\label{SCM}
+The discrete-event simulator models a single engine to which it requests arrive according to a Poisson process, each request has a batch size of B=8, and the service time it obtains is proportional to its measured output length, with the slots replenished from the arrival queue when the service finishes, similar to continuous batching~\cite{yu2022orca}. The same arrival traces and per-request lengths are used in all three policies, as such, any differences are due to ordering alone. The FCFS policy is based on arrival time, LTR policy is based on ascending predicted length from the point wise model and our policy is based on the ascending ranker score with signed priority boost and starvation promotion. End-to-end latency (arrival to completion), 50th, 95th, 99th percentiles, mean waiting time, mean time-to-first-token and throughput are reported.
+Four commands are documented in the repository README that are required to reproduce: \texttt{generate\_labels.py} (resumable), \texttt{train\_prodm.py}, 
+\texttt{train\_ranker.py}, and \texttt{evaluate.py} ; all of the figures appearing in Section V can be reproduced by running \texttt{scripts/makefigures.py}.
+
+Tables~\ref{tab:platform} and~\ref{tab:hyperparams} present the platform, tools and all hyper parameters—the other tools and benchmarks and libraries are presented in tables and in the text.
+
+\begin{table}[!t]
+\caption{Experimental Platform and Software Environment}
+\label{tab:platform}
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Component} & \textbf{Configuration} \\
+\midrule
+Compute & Google Colab Pro+, NVIDIA A100 (40\,GB) \\
+Served LLM & meta-llama/Llama-3.2-3B-Instruct (NF4 4-bit) \\
+OS / Runtime & Ubuntu 22.04, Python 3.12, CUDA 12 \\
+Core libraries & PyTorch~\cite{paszke2019pytorch}, Transformers~\cite{wolf2020transformers}, \\
+ & bitsandbytes~\cite{dettmers2023qlora}, HF Datasets \\
+Plotting & Matplotlib~\cite{hunter2007matplotlib} (scripts in \texttt{scripts/}) \\
+Ranker backbone & bert-base-uncased (110\,M)~\cite{devlin2019bert} \\
+Length predictor & 2-layer MLP, 3{,}072 $\rightarrow$ 512 $\rightarrow$ 32 bins \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!t]
+\caption{Hyperparameters of All Pipeline Stages}
+\label{tab:hyperparams}
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Stage} & \textbf{Parameter} & \textbf{Value} \\
+\midrule
+Labelling & samples per prompt $r$ & 3 \\
+ & temperature / top-$p$ & 0.7 / 0.9 \\
+ & max new tokens & 512 \\
+ & prompts (train / held-out) & 1{,}000 / 100 \\
+\addlinespace
+ProD-M MLP & bins / max length & 32 / 2{,}048 \\
+ & epochs / batch / LR & 15 / 32 / $10^{-3}$ \\
+\addlinespace
+PARS ranker & pairs / min.\ rel.\ diff.\ $\delta$ & 50{,}000 / 0.2 \\
+ & margin $m$ / max prompt len & 1.0 / 512 \\
+ & epochs / batch / LR & 8 / 16 / $2\times10^{-5}$ \\
+\addlinespace
+Scheduler & batch size / arrival rate & 8 / 8\,req/s \\
+ & starvation threshold & 120\,s \\
+ & priority boosts (hi/lo) & $-3.0$ / $+3.0$ \\
+ & random seed & 42 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\section{Evaluation}
+\subsection{Experimental Setup}
+All the numbers and figures in this section come from the repository's \texttt{evaluate.py} file. The plots are made with matplotlib scripts kept in \texttt{scripts/}. Running \texttt{scripts/make\_figures.py} will produce the exact same figures shown below. The main workload uses the same 1{,}000 labelled prompts from the rest of this report. These are split evenly across five datasets: GSM8K, MATH, LiveCodeBench, WildChat, and LongBench-v2 (200 prompts from each). Requests arrive following a Poisson process at 8\,req/s. The priority mix is 125 high-priority requests, 700 normal, and 175 low-priority. The held-out workload uses 100 verified prompts that the model has not seen before, with about the same proportions (13/70/17). We chose this mix on purpose, because it makes length prediction hard. Median output length on GSM8K math problems is under a hundred tokens. But MATH and LiveCodeBench often reach the 512-token limit. This means that, at any moment, the queue has requests with very different service times, sometimes ten times apart. This is exactly the situation where a good scheduling policy makes a difference. We measure latency from the moment a request arrives until it finishes. Throughput means the number of completed requests per second during the whole run.
+
+\subsection{Predictor Quality}
+On the held-out set, the pointwise predictor has a mean absolute error of 68.3 tokens against the median labels, compared to 46.0 on the training set. So this shows how hard it really is to predict the exact length on new, mixed-domain prompts. The pairwise ranker, on the other hand, only needs to get the order right, not the exact number, and it reaches a Kendall's Tau of 0.521, a pairwise accuracy of 0.761, and an NDCG of 0.968 (Fig.~\ref{fig:ranking}). These numbers land between the Alpaca and LMSYS results reported for PARS on similar open models \cite{tao2025pars}, which makes sense, since our five-domain mixture was made to be harder on purpose. The high NDCG score matters a lot here, because it shows the ranker works best exactly where scheduling needs it most: separating the very long requests from the rest of the queue. The gap between the training MAE (46.0) and the held-out MAE (68.3) is about 48\%. This result suggests how much more difficult absolute length prediction becomes once the model is evaluated on domains outside its training data. The ranker, though, holds up much better: a held-out pairwise accuracy of 0.761 means it still gets three out of four ordering decisions right, even on prompts from domains where it only saw 200 training examples each. That lines up with the budget-fairness analysis in ProD \cite{wang2026prodm}, and it backs up the choice we made: spend a fixed labelling budget on $r=3$ samples across fewer prompts, instead of just one sample across more of them.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_ranking_quality.png}
+\caption{Ranking quality of the pairwise predictor on 100 held-out prompts. Ordering the queue is easier than predicting absolute lengths: pairwise accuracy 0.761 and NDCG 0.968 despite a pointwise MAE of 68.3 tokens on the same prompts.}
+\label{fig:ranking}
+\end{figure}
+
+\subsection{Training Dynamics}
+Fig.~\ref{fig:trainingloss} shows both training curves. The ProD-M MLP converges smoothly, dropping from 2.98 down to 0.39 cross-entropy over 15 epochs, and there's no sign of instability anywhere in that curve. That tells us the served model's last-layer hidden state really is informative about output length, in a fairly straightforward, linear way, which lines up with what TRAIL and ProD found \cite{shahout2025trail,wang2026prodm}. The BERT ranker's margin loss, meanwhile, collapses from 0.108 to below 0.007 within eight epochs on the 50,000 filtered pairs. So if you put those two things together, that near-zero training loss and the 0.761 held-out pairwise accuracy, it suggests the filtered pairs really are cleanly separable, while the near-ties we filtered out stay genuinely ambiguous. And that backs up the whole PARS filtering idea in the first place \cite{tao2025pars}.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_training_loss.png}
+\caption{Training loss curves. Left: ProD-M length predictor (cross-entropy over 32 bins, 15 epochs). Right: PARS pairwise ranker (margin ranking loss, 8 epochs, 50,000 filtered pairs).}
+\label{fig:trainingloss}
+\end{figure}
+
+\subsection{Main Workload: Scheduler Comparison}
+Fig.~\ref{fig:avlatency} compares average end-to-end latency on the 1{,}000-prompt workload at 8\,req/s. FCFS averages 87.3\,s per request. The pointwise LTR scheduler comes in at 52.9\,s, and our PARS+ProD-M scheduler does it in 49.9\,s, so that's a 42.9\% cut versus FCFS, and another 5.8\% on top of that versus the LTR baseline. Throughput barely moves across the three policies (3.28--3.29\,req/s, Fig.~\ref{fig:throughput} left), which is what we'd expect, since reordering requests doesn't change the total amount of work. So whatever gains we see just come from cutting queueing delay by clearing short requests earlier. The size of the gain actually lines up with the mechanism behind it: output lengths here range from a few dozen tokens on GSM8K all the way up to the 512-token cap on MATH and LiveCodeBench, so under FCFS, short requests end up waiting behind long ones roughly half the time. Length-aware admission gets rid of most of that wasted waiting.
+
+Two things are worth calling out here. First, our 5.8\% edge over the LTR baseline is on the exact same inputs, so it isolates what the pairwise-plus-median design is actually contributing, since both policies work off the same labelled workload inside the same simulator. The improvement is modest in absolute terms, but it comes at no extra serving cost. Second, the gains grow with queue depth: at 8\,req/s the system is already operating above the congestion knee we identify in Section~V-F, and that's representative of the bursty, peak-hour traffic that motivates learned scheduling in the first place \cite{fu2024efficient,tao2025pars}.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_average_latency.png}
+\caption{Average end-to-end latency. Left: main 1,000-prompt workload; ours reduces mean latency 42.9\% vs. FCFS and 5.8\% vs. the pointwise LTR
+baseline. Right: 100 held-out prompts; the ordering of policies is preserved on unseen data.}
+\label{fig:avlatency}
+\end{figure}
+
+\subsection{Held-Out Generalisation and Tail Latency}
+The results for the 100 verified prompts that were not used to train the models are summarized in Table~\ref{tab:heldout} and the average latency for each scheduling policy is shown in Fig.~\ref{fig:avlatency}. The overall rank of the methods is more or less the same on unseen data. For the FCFS scheduler, the average latency is 10.62\,s, while the average latency of the pointwise LTR scheduler is 8.77\,s and our scheduler gets 9.58\,s. On this small evaluation set, the pointwise baseline performs slightly better; however, our approach still decreases the average latency by 9.8\% when compared with FCFS. The mean waiting time also drops from 7.93\,s to 6.88\,s, and the time-to-first-token is also reduced, as in our simulator the first token is generated very shortly after a request is accepted.
+It is interesting to note that our scheduler underperforms a little on the held-out set compared to the pointwise baseline. This is likely due to a lower ranker score on unseen domains (Kendall's Tau = 0.52). Moreover, the priority mechanism intentionally lets some long, high-priority requests proceed ahead of others in the queue, which sometimes works against the scheduling advantage we would otherwise expect.
+The percentile analysis presented in Fig.~\ref{fig:fheldout} shows the trade-off which is typical of SJF scheduling policies. The median latency (p50) for both learned schedulers is cut by nearly half, from 10.8\,s (FCFS) to 5.3--5.5\,s. The higher percentiles, however, run counter to this. The p95 latency increases from 22.9\,s with FCFS to 23.6\,s for LTR and 27.1\,s for our scheduler, while p99 rises from 23.9\,s to 30.0\,s. The same behaviour is also seen for the larger workload. Our scheduler trades a 42.9\% decrease in mean latency for a 31.0\% increase in p95 latency (see Fig.~\ref{fig:workload}), while the LTR baseline trades a 39.3\% reduction in mean latency for a 20.5\% increase in p95 latency.
+These results are normal, since the scheduler is designed to do this. The requests that are expected to take a longer time to execute are delayed to ensure that the short requests are executed first, which obviously increases the wait time for the longest requests. In order to avoid too long a delay, the starvation mechanism restricts the extra delay time to 120\,s. Compared to the pointwise LTR scheduler, our approach is more aggressive in reordering and also demotes low-priority requests further, which is why there is a larger increase in p95 latency. The implications of this trade-off for issues of fairness are discussed in the next section.
+
+\begin{table}[!t]
+\caption{Held-out Workload (100 Fresh Prompts): Full Metric Set.\\
+Latency Figures in Seconds; Best Value per Row in Bold.}
+\label{tab:heldout}
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Metric} & \textbf{FCFS} & \textbf{LTR} & \textbf{Ours} \\
+\midrule
+Avg. latency & 10.621 & \textbf{8.769} & 9.575 \\
+p50 latency & 10.820 & \textbf{5.303} & 5.515 \\
+p95 latency & \textbf{22.941} & 23.606 & 27.138 \\
+p99 latency & 23.899 & 24.309 & 30.022 \\
+Avg. wait & 7.927 & \textbf{6.075} & 6.881 \\
+Avg. TTFT & 7.977 & \textbf{6.125} & 6.931 \\
+Throughput (req/s) & 2.77 & \textbf{2.81} & 2.72 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_Throughput.png}
+\caption{Throughput is unchanged across policies on both workloads (3.28–
+3.29 and 2.72–2.81 req/s respectively): scheduling reorders work rather than reducing it, so latency gains come from queueing delay alone.}
+\label{fig:throughput}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_held_out.png}
+\caption{Held-out latency percentiles. Length-aware policies halve median
+latency but inflate the tail: p95/p99 rise because predicted-long requests are systematically deprioritised, the inherent SJF fairness trade-off.}
+\label{fig:fheldout}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_main_workload.png}
+\caption{Main workload, relative change vs. FCFS (negative is better).
+Both learned policies buy large mean-latency reductions at the cost of p95 regressions; ours reorders most aggressively and shows both the largest mean gain and the largest tail cost.}
+\label{fig:workload}
+\end{figure}
+
+\subsection{Sensitivity to Load}
+Fig.~\ref{fig:latencyvsrequest} varies the Poisson arrival rate of requests on the held-out workload from 5 to 60\,req/s. Queues are kept short at light load (5\,req/s) and every policy lands within 1.1\,s of each other, which makes sense: if there is not much to reorder in the first place, scheduling doesn't really matter. As the load increases, the gap widens and then saturates: beyond about 30\,req/s the system is capacity-bound, all the policies' latencies become flat, and the learned schedulers consistently outperform FCFS by between 1.0 and 2.0\,s throughout the range of congestion. That saturating shape is the same as the load curves reported by the primary paper \cite{fu2024efficient} and by PARS \cite{tao2025pars}, and is the kind of shape that shows up exactly when HOL blocking does.
+
+From this, two practical takeaways are derived: a deployment below the knee would not be well served by any amount of learning in scheduling, and may simply end up turning the ranker off as a way of saving its (already small) scoring cost; a deployment that routinely bursts past the knee, though, enjoys the full benefit. Because the three curves do not spread apart even under overload, the learned policies do not become less effective there, they merely move the entire latency curve down. Notice also that the LTR baseline (consistent with Table~\ref{tab:heldout}) sits slightly below ours across this held-out sweep, which comes from the same ranking noise we saw in Table~\ref{tab:heldout} (Tau-0.52); on the ten-times larger main workload, that ordering flips, which suggests the pairwise advantage grows with the length diversity of the queue we discussed earlier.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_latency.png}
+\caption{Average latency vs. arrival rate (held-out workload). Gains from
+length-aware scheduling appear under congestion and persist as the system
+saturates; at trivial load all policies coincide.}
+\label{fig:latencyvsrequest}
+\end{figure}
+
+\subsection{Training and Serving Cost}
+Therefore, this approach ensures high operational cost efficiency. The biggest cost is offline: labels, which we generated three times per prompt with the quantized 3B model, and runtime preemptions never resulted in a loss of progress due to the resumable, chunked design. The BERT ranker completes its eight epochs in less than four hours on a single A100, while the ProD-M MLP completes its epochs in seconds (15 epochs with 1,000 hidden states). Online, scoring a waiting request takes only one BERT-base forward pass over at most 512 prompt tokens, with the overhead per BERT forward pass reported at millisecond scale for this model class \cite{xie2026egtp}, and we never call the served LLM for scheduling purposes. In practice, when the served model changes, or the workload changes, the entire predictor stack can be retrained overnight, although PARS' cross-model results indicate that this may not be needed for all deployments \cite{tao2025pars}.
+
+\clearpage
+\section{Discussion}
+The main finding of this study is that combining robust median supervision with a pairwise ranking objective produces an effective scheduler for reducing LLM inference latency. On the mixed-domain workload, the proposed policy reduced mean latency by 42.9\% compared with FCFS while maintaining the same throughput. Since the ranking model contains only 110M parameters, its inference cost is negligible compared with LLM decoding. The results also show that the two main components play complementary roles. Median supervision reduces label noise, whereas the pairwise objective focuses on learning the relative ordering decisions required by the scheduler. Although the held-out Kendall's Tau reached only 0.521, noticeably lower than the value reported by PARS on the single-domain Alpaca dataset \cite{tao2025pars}, the learned ordering was still sufficient to produce substantial latency improvements. This observation is consistent with previous work arguing that scheduling performance depends more on correctly ranking requests than on accurately predicting their exact output lengths \cite{fu2024efficient}.
+Tail latency, however, reveals an important trade-off. While the proposed scheduler improves mean latency by 42.9\%, p95 latency increases by 31\% relative to FCFS, and p99 on the held-out set rises from 23.9\,s to 30.0\,s. Compared with the pointwise baseline, our scheduler performs more aggressive reordering and introduces low-priority demotions, which explains the larger increase in the upper percentiles. This behaviour is expected for SJF-style scheduling because requests predicted to be long are intentionally delayed to reduce the waiting time of shorter ones. The starvation mechanism limits this effect by capping additional waiting time at 120\,s, although adapting this threshold to service-level objectives would provide a more flexible fairness policy.
+This study has several limitations. First, the scheduler was evaluated in a discrete-event simulator rather than within a live vLLM deployment, so effects related to continuous batching, prefill--decode interference \cite{agrawal2024sarathi}, and KV-cache pressure \cite{kwon2023pagedattention} were outside the scope of this work. Second, all experiments were conducted using a single Llama-3.2-3B model with one random seed. Third, the held-out evaluation includes only 100 prompts, so percentile estimates may exhibit considerable variance. Finally, label generation was limited to 512 output tokens, preventing evaluation on extremely long reasoning traces \cite{guo2025deepseekr1}.
+It is also important to acknowledge the computational constraints that influenced this study. Some design decisions were shaped by the available resources, including the choice of a 3B-parameter model with 4-bit quantization, the 512-token generation limit, and the evaluation on 1{,}000 prompts instead of a larger workload. These decisions allowed the experiments to be completed within a reasonable time while keeping the evaluation consistent across all scheduling policies. With access to greater computational resources, future studies could evaluate larger models, longer generations, and more extensive workloads, which may provide additional insight into ranking performance and tail-latency behaviour.
+The fairness implications also deserve consideration. FCFS is procedurally fair because requests are processed in arrival order, but short requests often spend most of their time waiting behind much longer generations. Length-aware scheduling shifts part of this waiting time to longer requests, improving responsiveness for the majority of interactive workloads. The priority mechanism extends this idea by allowing application-specific priorities to influence scheduling decisions. The next phase should replace the fixed starvation threshold with an SLO-aware policy that explicitly controls tail latency while preserving the latency benefits observed here.
+Future work will focus on validating the scheduler within vLLM, replacing ProD-M with distributional ProD-D supervision, exploring entropy-guided pooling \cite{xie2026egtp}, scaling label generation to larger datasets, and developing adaptive starvation mechanisms that directly optimize service-level objectives.
+
+\clearpage
+\section{CONCLUSION}
+This capstone developed and evaluated a length-aware scheduler for LLM requests that combines robust median supervision from repeated sampling (ProD-M), a BERT-based pairwise learning-to-rank model (PARS), and priority-aware starvation control. Across a workload of 1,000 prompts spanning five domains and served by Llama-3.2-3B, the proposed scheduler reduced average end-to-end latency by 42.9\% compared with FCFS and by 5.8\% compared with a pointwise learning-to-rank baseline, while maintaining essentially the same throughput. The scheduler also generalized to a held-out set of verified prompts, achieving a Kendall's Tau of 0.521. As expected for an SJF-style policy, these improvements came with a 31\% increase in p95 latency, although the starvation mechanism kept this trade-off within acceptable limits. Overall, these results suggest that robustly supervised relative ordering is both an effective and practical strategy for reducing latency in LLM serving systems.
+
+\clearpage
+\appendix[Appendix A]
+This appendix must contain a screenshot of the \texttt{latex\_source} directory of the group's GitHub repository, taken \emph{after} this LaTeX source has been pushed to a directory named \texttt{latex\_source} at the top level of the repository. No screenshot is embedded in this draft because the source had not yet been pushed at the time this file was generated.
+
+\begin{figure}[htbp]
+\centering
+\fbox{\begin{minipage}{0.85\linewidth}\centering\vspace{2.2cm}
+\emph{[Insert screenshot of the \texttt{latex\_source/} directory on GitHub here after pushing.]}
+\vspace{2.2cm}\end{minipage}}
+\caption{Placeholder for the required GitHub \texttt{latex\_source} directory screenshot.}
+\label{fig:appendix}
+\end{figure}
+
+\clearpage
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
