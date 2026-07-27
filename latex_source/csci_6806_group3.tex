@@ -428,20 +428,28 @@ The fairness implications also deserve consideration. FCFS is procedurally fair 
 Future work will focus on validating the scheduler within vLLM, replacing ProD-M with distributional ProD-D supervision, exploring entropy-guided pooling \cite{xie2026egtp}, scaling label generation to larger datasets, and developing adaptive starvation mechanisms that directly optimize service-level objectives.
 
 \clearpage
-\section{CONCLUSION}
+\section{Conclusion}
 This capstone developed and evaluated a length-aware scheduler for LLM requests that combines robust median supervision from repeated sampling (ProD-M), a BERT-based pairwise learning-to-rank model (PARS), and priority-aware starvation control. Across a workload of 1,000 prompts spanning five domains and served by Llama-3.2-3B, the proposed scheduler reduced average end-to-end latency by 42.9\% compared with FCFS and by 5.8\% compared with a pointwise learning-to-rank baseline, while maintaining essentially the same throughput. The scheduler also generalized to a held-out set of verified prompts, achieving a Kendall's Tau of 0.521. As expected for an SJF-style policy, these improvements came with a 31\% increase in p95 latency, although the starvation mechanism kept this trade-off within acceptable limits. Overall, these results suggest that robustly supervised relative ordering is both an effective and practical strategy for reducing latency in LLM serving systems.
 
 \clearpage
 \appendix[Appendix A]
-This appendix must contain a screenshot of the \texttt{latex\_source} directory of the group's GitHub repository, taken \emph{after} this LaTeX source has been pushed to a directory named \texttt{latex\_source} at the top level of the repository. No screenshot is embedded in this draft because the source had not yet been pushed at the time this file was generated.
 
 \begin{figure}[htbp]
 \centering
-\fbox{\begin{minipage}{0.85\linewidth}\centering\vspace{2.2cm}
-\emph{[Insert screenshot of the \texttt{latex\_source/} directory on GitHub here after pushing.]}
-\vspace{2.2cm}\end{minipage}}
-\caption{Placeholder for the required GitHub \texttt{latex\_source} directory screenshot.}
-\label{fig:appendix}
+\setlength{\fboxsep}{0pt}
+\setlength{\fboxrule}{1pt}
+\fbox{\includegraphics[width=0.95\linewidth]{figures/fig_app_main.png}}
+\caption{The \texttt{latex\_source} directory pushed to the top level of the project's GitHub repository.}
+\label{fig:appendixgithub}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\setlength{\fboxsep}{0pt}
+\setlength{\fboxrule}{1pt}
+\fbox{\includegraphics[width=0.95\linewidth]{figures/fig_app_folder.png}}
+\caption{The \texttt{latex\_source} directory, pushed to the top level of the group's GitHub repository, showing the \texttt{figures/} subdirectory, the LaTeX source file, and \texttt{references.bib}.}
+\label{fig:appendixghfolder}
 \end{figure}
 
 \clearpage
