@@ -67,7 +67,7 @@ This segment presents the technical basics needed to understand the design of th
 \subsection{Process of LLM Serving Pipeline and HOL Blocking LLM inference}\label{AA}
  In the first stage, the whole prompt is processed at once, which fills the key-value (KV) cache; this stage is compute-bound. The second stage is the token generation process, during which each token is generated one at a time based on the data already stored in the cache; this stage is memory-bound, and its duration is directly proportional to the number of tokens produced. Because producing a token at each step requires reading the data stored in the KV cache, an increase in token length brings a proportional increase in the amount of memory used, so completing a request depends on memory pressure as much as on raw compute.
 
-\begin{figure}[htbp]
+\begin{figure}[htbp] % Figure 1: LLM serving pipeline.
 \centering
 \begin{tikzpicture}[
   node distance=5mm,
@@ -81,7 +81,7 @@ This segment presents the technical basics needed to understand the design of th
     minimum width=13mm,
     align=center,
     inner sep=1.5pt
-  },
+  },% Illustrates the request flow, scheduling stage,
   arr/.style={
     -{Latex[length=1.4mm]}
   }
@@ -92,7 +92,7 @@ This segment presents the technical basics needed to understand the design of th
   right=of clients,
   minimum width=15mm
 ] (queue)
-{Waiting\\queue};
+{Waiting\\queue};% and KV-cache interaction.
 \node[
   box,
   right=of queue,
